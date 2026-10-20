@@ -1,0 +1,22 @@
+{
+  "name": "refs-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/cli"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "refs": "node packages/cli/src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-concurrency=4 \"packages/*/test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}
