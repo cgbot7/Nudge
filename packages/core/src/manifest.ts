@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { RefsError, decodeText, errorMessage, writeFileAtomic } from './util.ts';
+import { RefsError, daysSince, decodeText, errorMessage, writeFileAtomic } from './util.ts';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -75,4 +75,9 @@ export function findById(sheets: Sheet[], id: string): Sheet | undefined {
 
 export function findBySha(sheets: Sheet[], sha: string): Sheet | undefined {
   return sheets.find((s) => s.sha256 === sha);
+}
+
+/** Stale: lastVerified is more than `staleAfterDays` days ago. */
+export function isStale(sheet: Sheet, staleAfterDays: number, now = new Date()): boolean {
+  return daysSince(sheet.lastVerified, now) > staleAfterDays;
 }

@@ -1,6 +1,9 @@
 import type { DB } from './db.ts';
-import type { Sheet } from './manifest.ts';
+import { isStale, type Sheet } from './manifest.ts';
 import { normalizeTag } from './util.ts';
+
+/** bm25 scores are negative (lower is better); a stale hit keeps this share of its score. */
+const STALE_FACTOR = 0.5;
 
 export interface SearchHit {
   id: string;
@@ -12,7 +15,9 @@ export interface SearchHit {
   format: Sheet['format'];
   file: string;
   snippet: string;
-  /** bm25 rank: lower is better. */
+  /** lastVerified is older than staleAfterDays. */
+  stale: boolean;
+  /** bm25 rank, demoted for stale sheets: lower is better. */
   score: number;
 }
 
@@ -22,6 +27,9 @@ export interface SearchOptions {
   limit?: number;
   /** Markers around matched terms in the snippet. */
   highlight?: [string, string];
+  /** Sheets verified longer ago than this are flagged stale and ranked lower. Default 180. */
+  staleAfterDays?: number;
+  now?: Date;
 }
 
 const STOPWORDS = new Set([
@@ -68,11 +76,13 @@ export function keywordSearch(db: DB, sheets: Sheet[], query: string, opts: Sear
     score: number;
   }[];
 
+  const staleAfterDays = opts.staleAfterDays ?? 180;
   const hits: SearchHit[] = [];
   for (const r of rows) {
     const sheet = byId.get(r.id);
     if (!sheet) continue;
     if (!wantTags.every((t) => sheet.tags.includes(t))) continue;
+    const stale = isStale(sheet, staleAfterDays, opts.now);
     hits.push({
       id: sheet.id,
       title: sheet.title,
@@ -83,9 +93,10 @@ export function keywordSearch(db: DB, sheets: Sheet[], query: string, opts: Sear
       format: sheet.format,
       file: sheet.file,
       snippet: r.snippet.replace(/\s+/g, ' ').trim(),
-      score: r.score,
+      stale,
+      score: stale ? r.score * STALE_FACTOR : r.score,
     });
-    if (hits.length >= limit) break;
   }
-  return hits;
+  // Stable sort keeps bm25 order among equal scores.
+  return hits.sort((a, b) => a.score - b.score).slice(0, limit);
 }

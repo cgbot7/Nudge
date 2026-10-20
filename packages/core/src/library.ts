@@ -3,17 +3,19 @@ import path from 'node:path';
 import { chunkExtracted, type Section } from './chunk.ts';
 import { extract } from './extract/index.ts';
 import { commitPaths, git, isRepoRoot } from './git.ts';
-import { manifestPath, type Sheet } from './manifest.ts';
-import { dataPaths } from './paths.ts';
-import { RefsError, sha256, writeFileAtomic } from './util.ts';
+import { manifestPath, writeManifest, type Sheet } from './manifest.ts';
+import { dataPaths, pathKey } from './paths.ts';
+import { seedRuleFiles } from './rules.ts';
+import { blockingFindings, scanSecrets, type Finding } from './secrets.ts';
+import { RefsError, errorMessage, sha256, today, writeFileAtomic } from './util.ts';
 
 export const LIBRARY_GITIGNORE = 'inbox/\n';
 // Git must never rewrite line endings in sheets, or their SHA256 stops matching the manifest.
 export const LIBRARY_GITATTRIBUTES = '* -text\n';
 
 /**
- * Create the library folder layout and its Git repo if missing.
- * Returns human-readable notes about anything it created.
+ * Create the library folder layout and its Git repo if missing, and seed rules.json
+ * and tags.json. Returns human-readable notes about anything it created.
  */
 export function ensureLibrary(library: string): string[] {
   const notes: string[] = [];
@@ -25,13 +27,17 @@ export function ensureLibrary(library: string): string[] {
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, LIBRARY_GITIGNORE);
   const attributes = path.join(library, '.gitattributes');
   if (!fs.existsSync(attributes)) fs.writeFileSync(attributes, LIBRARY_GITATTRIBUTES);
+  const seeded = seedRuleFiles(library);
 
   if (!isRepoRoot(library)) {
     const init = git(library, ['init', '--quiet', '-b', 'main']);
     if (!init.available) throw new RefsError('git is not installed or not on PATH; the library must be a Git repo.');
     if (!init.ok) throw new RefsError(`git init failed in ${library}: ${init.stderr}`);
-    const commit = commitPaths(library, ['.gitignore', '.gitattributes', 'manifest.json'], 'refs: create library');
+    const commit = commitPaths(library, ['.gitignore', '.gitattributes', 'manifest.json', ...seeded], 'refs: create library');
     notes.push(commit.ok ? 'initialized library Git repo' : `initialized library Git repo (first commit failed: ${commit.stderr})`);
+  } else if (seeded.length) {
+    const commit = commitPaths(library, seeded, `refs: add default ${seeded.join(' and ')}`);
+    notes.push(`added default ${seeded.join(' and ')} to the library${commit.ok ? '' : ` (commit failed: ${commit.stderr})`}`);
   }
   return notes;
 }
@@ -49,10 +55,13 @@ export function writeExtractCache(sha: string, text: string): void {
   writeFileAtomic(extractCacheFile(sha), text);
 }
 
-/** Extracted text for a library file, cached by content hash in extract-cache\<sha256>.txt. */
-export async function extractCached(format: Sheet['format'], buf: Buffer, sha = sha256(buf)): Promise<{ text: string; warnings: string[] }> {
+/**
+ * Extracted text for a library file, cached by content hash in extract-cache\<sha256>.txt.
+ * `fresh` ignores the cache and extracts from the file again (refs index --rebuild).
+ */
+export async function extractCached(format: Sheet['format'], buf: Buffer, sha = sha256(buf), fresh = false): Promise<{ text: string; warnings: string[] }> {
   const cacheFile = extractCacheFile(sha);
-  if (fs.existsSync(cacheFile)) return { text: fs.readFileSync(cacheFile, 'utf8'), warnings: [] };
+  if (!fresh && fs.existsSync(cacheFile)) return { text: fs.readFileSync(cacheFile, 'utf8'), warnings: [] };
   const result = await extract(format, buf);
   writeExtractCache(sha, result.text);
   return result;
@@ -65,4 +74,110 @@ export async function sheetSections(library: string, sheet: Sheet): Promise<Sect
   const buf = fs.readFileSync(file);
   const { text } = await extractCached(sheet.format, buf);
   return chunkExtracted(sheet.format, text);
+}
+
+/** Library-relative paths (forward slashes) of every file under sheets\ and drafts\. */
+export function libraryFiles(library: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, rel: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const childRel = `${rel}/${e.name}`;
+      if (e.isDirectory() && !e.isSymbolicLink()) walk(path.join(dir, e.name), childRel);
+      else if (e.isFile() && !e.name.startsWith('~$')) out.push(childRel);
+    }
+  };
+  for (const top of ['sheets', 'drafts']) walk(path.join(library, top), top);
+  return out;
+}
+
+export interface SyncReport {
+  /** Re-extracted with a new sha256 and updatedAt. */
+  edited: string[];
+  /** Matched to an unknown file with the same hash. */
+  renamed: { id: string; from: string; to: string }[];
+  /** Still missing after rename matching. Never removed from the manifest; refs doctor reports them. */
+  missing: string[];
+  /** Edited, but the new text has likely secrets: not accepted until redacted or allowlisted. */
+  blocked: { id: string; file: string; findings: Finding[] }[];
+  /** Edited, but the new text could not be extracted. */
+  unreadable: { id: string; message: string }[];
+  /** Files in sheets\ or drafts\ that no manifest entry points to. */
+  unknown: string[];
+  commitError?: string;
+}
+
+/**
+ * Bring the manifest in line with the library files. Call with the lock held.
+ * An edited file gets a new sha256 and updatedAt (lastVerified and status are kept);
+ * an unknown file whose hash matches a missing entry is that entry, renamed.
+ */
+export async function syncLibrary(library: string, sheets: Sheet[]): Promise<SyncReport> {
+  const report: SyncReport = { edited: [], renamed: [], missing: [], blocked: [], unreadable: [], unknown: [] };
+  const date = today();
+  for (const sheet of sheets) {
+    const file = sheetAbsPath(library, sheet);
+    if (!fs.existsSync(file)) {
+      report.missing.push(sheet.id);
+      continue;
+    }
+    const buf = fs.readFileSync(file);
+    const sha = sha256(buf);
+    if (sha === sheet.sha256) continue;
+    let text: string;
+    try {
+      text = (await extract(sheet.format, buf)).text;
+    } catch (e) {
+      report.unreadable.push({ id: sheet.id, message: errorMessage(e) });
+      continue;
+    }
+    const findings = scanSecrets(text, sheet.secretAllowlist);
+    if (blockingFindings(findings).length) {
+      report.blocked.push({ id: sheet.id, file, findings });
+      continue;
+    }
+    writeExtractCache(sha, text);
+    sheet.sha256 = sha;
+    sheet.updatedAt = date;
+    report.edited.push(sheet.id);
+  }
+
+  const known = new Set(sheets.map((s) => pathKey(sheetAbsPath(library, s))));
+  report.unknown = libraryFiles(library).filter((rel) => !known.has(pathKey(path.join(library, rel))));
+  if (report.missing.length && report.unknown.length) {
+    const byHash = new Map<string, string>();
+    for (const rel of report.unknown) {
+      const sha = sha256(fs.readFileSync(path.join(library, rel)));
+      if (!byHash.has(sha)) byHash.set(sha, rel);
+    }
+    for (const id of [...report.missing]) {
+      const sheet = sheets.find((s) => s.id === id)!;
+      const rel = byHash.get(sheet.sha256);
+      if (!rel) continue;
+      byHash.delete(sheet.sha256);
+      report.renamed.push({ id, from: sheet.file, to: rel });
+      sheet.file = rel;
+      report.missing.splice(report.missing.indexOf(id), 1);
+      report.unknown.splice(report.unknown.indexOf(rel), 1);
+    }
+  }
+
+  if (report.edited.length || report.renamed.length) {
+    writeManifest(library, sheets);
+    const tracked = (rel: string) => git(library, ['ls-files', '--error-unmatch', '--', rel]).ok;
+    const paths = [
+      'manifest.json',
+      ...report.edited.map((id) => sheets.find((s) => s.id === id)!.file),
+      ...report.renamed.flatMap((r) => (tracked(r.from) ? [r.from, r.to] : [r.to])),
+    ];
+    const parts = [report.edited.length && `${report.edited.length} edited`, report.renamed.length && `${report.renamed.length} renamed`].filter(Boolean);
+    const commit = commitPaths(library, [...new Set(paths)], `refs: sync library (${parts.join(', ')})`);
+    if (!commit.ok) report.commitError = commit.stderr || 'unknown error';
+  }
+  return report;
 }

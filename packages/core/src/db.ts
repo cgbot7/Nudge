@@ -7,7 +7,7 @@ import { dataPaths } from './paths.ts';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** Open (and create or migrate) index.db. Everything in it is rebuildable from the library. */
 export function openDb(file = dataPaths().db): DB {
@@ -23,10 +23,16 @@ export function openDb(file = dataPaths().db): DB {
 function migrate(db: DB): void {
   const version = db.pragma('user_version', { simple: true }) as number;
   if (version >= SCHEMA_VERSION) return;
+  // v2 added sheets.meta (title and tags as indexed), so a tag edit in manifest.json re-indexes.
+  if (version === 1) {
+    db.exec(`ALTER TABLE sheets ADD COLUMN meta TEXT NOT NULL DEFAULT ''; PRAGMA user_version = ${SCHEMA_VERSION};`);
+    return;
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS sheets (
       id      TEXT PRIMARY KEY,
-      sha256  TEXT NOT NULL
+      sha256  TEXT NOT NULL,
+      meta    TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS sections (
       id       INTEGER PRIMARY KEY,
@@ -49,13 +55,18 @@ export function removeSheet(db: DB, id: string): void {
   db.prepare('DELETE FROM sheets WHERE id = ?').run(id);
 }
 
+/** What, besides the file content, ends up in the index for a sheet. */
+export function sheetMeta(sheet: Sheet): string {
+  return JSON.stringify([sheet.title, sheet.tags]);
+}
+
 /** Replace everything indexed for one sheet. */
 export function indexSheet(db: DB, sheet: Sheet, sections: Section[]): void {
   const insertSection = db.prepare('INSERT INTO sections (sheet_id, idx, heading, text) VALUES (?, ?, ?, ?)');
   const insertFts = db.prepare('INSERT INTO sections_fts (rowid, title, heading, text, tags) VALUES (?, ?, ?, ?, ?)');
   db.transaction(() => {
     removeSheet(db, sheet.id);
-    db.prepare('INSERT INTO sheets (id, sha256) VALUES (?, ?)').run(sheet.id, sheet.sha256);
+    db.prepare('INSERT INTO sheets (id, sha256, meta) VALUES (?, ?, ?)').run(sheet.id, sheet.sha256, sheetMeta(sheet));
     const tags = sheet.tags.join(' ');
     for (const s of sections) {
       const { lastInsertRowid } = insertSection.run(sheet.id, s.idx, s.heading, s.text);
@@ -68,6 +79,12 @@ export function indexSheet(db: DB, sheet: Sheet, sections: Section[]): void {
 export function indexedSheets(db: DB): Map<string, string> {
   const rows = db.prepare('SELECT id, sha256 FROM sheets').all() as { id: string; sha256: string }[];
   return new Map(rows.map((r) => [r.id, r.sha256]));
+}
+
+/** sheet id to what was indexed: content hash and sheetMeta(). */
+export function indexedState(db: DB): Map<string, { sha256: string; meta: string }> {
+  const rows = db.prepare('SELECT id, sha256, meta FROM sheets').all() as { id: string; sha256: string; meta: string }[];
+  return new Map(rows.map((r) => [r.id, { sha256: r.sha256, meta: r.meta }]));
 }
 
 export function sectionCount(db: DB): number {

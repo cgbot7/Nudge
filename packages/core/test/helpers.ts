@@ -15,9 +15,14 @@ export interface TestEnv {
  * Fresh APPDATA, LOCALAPPDATA and library under a temp folder. Sets process.env too,
  * since core paths are resolved from the environment on every call.
  */
+const sandboxes: string[] = [];
+process.on('exit', () => {
+  for (const root of sandboxes) fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+});
+
 export function setupEnv(): TestEnv {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-test-'));
-  process.on('exit', () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 }));
+  sandboxes.push(root);
   const library = path.join(root, 'library');
   const work = path.join(root, 'work dir & more');
   fs.mkdirSync(work, { recursive: true });
@@ -29,11 +34,39 @@ export function setupEnv(): TestEnv {
     GIT_COMMITTER_NAME: 'refs test',
     GIT_COMMITTER_EMAIL: 'refs-test@localhost',
     NO_COLOR: '1',
+    // Keep refs install and refs doctor away from the real profiles and scheduled task.
+    REFS_DOCUMENTS_DIR: path.join(root, 'documents'),
+    REFS_TASK_NAME: `refs-test-${path.basename(root)}`,
   };
   Object.assign(process.env, env);
   fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
   fs.writeFileSync(path.join(env.APPDATA!, 'refs', 'config.json'), JSON.stringify({ library: library.replace(/\\/g, '/') }));
   return { root, library, work, env: { ...process.env, ...env } };
+}
+
+/** A SystemOps that never touches the machine; records what install would do. */
+export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: boolean; path?: string | null; taskExists?: boolean } = {}) {
+  const calls: { writeUserPath: string[]; createTask: { name: string; xml: string }[] } = { writeUserPath: [], createTask: [] };
+  let pathValue = opts.path === undefined ? '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps' : opts.path;
+  let task = opts.taskExists ?? false;
+  const sys = {
+    info: () => ({
+      documents,
+      executionPolicy: opts.policy ?? 'RemoteSigned',
+      pwshInstalled: opts.pwsh ?? true,
+      userPath: pathValue === null ? null : { value: pathValue, kind: 'ExpandString' },
+    }),
+    writeUserPath(value: string) {
+      calls.writeUserPath.push(value);
+      pathValue = value;
+    },
+    taskExists: () => task,
+    createTask(name: string, xml: string) {
+      calls.createTask.push({ name, xml });
+      task = true;
+    },
+  };
+  return { sys, calls };
 }
 
 export function write(dir: string, name: string, content: string | Buffer): string {

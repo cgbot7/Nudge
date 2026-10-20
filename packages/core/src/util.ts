@@ -34,17 +34,38 @@ export function today(now = new Date()): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
 /** Write via temp file and rename so readers never see a half-written file. */
 export function writeFileAtomic(file: string, data: string | Buffer): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, data);
-  try {
-    fs.renameSync(tmp, file);
-  } catch (e) {
-    fs.rmSync(tmp, { force: true });
-    throw e;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      // On Windows a reader holding the target open (the prompt hook, an editor)
+      // makes the rename fail for a moment; retry briefly before giving up.
+      if (attempt < 10 && RENAME_RETRY_CODES.has(errorCode(e) ?? '')) {
+        sleepSync(25);
+        continue;
+      }
+      fs.rmSync(tmp, { force: true });
+      throw e;
+    }
   }
+}
+
+export function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Whole days from a YYYY-MM-DD date to the local calendar date of `now`. */
+export function daysSince(isoDate: string, now = new Date()): number {
+  const [y, m, d] = isoDate.split('-').map(Number) as [number, number, number];
+  return Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(y, m - 1, d)) / 86_400_000);
 }
 
 /** Decode text files: UTF-8 (with or without BOM) or UTF-16 LE with BOM. Line endings become \n. */

@@ -55,12 +55,14 @@ test('end to end: doctor, add, search, open, blocked add, allow', () => {
 
   r = refs('doctor');
   assert.equal(r.code, 0, r.stdout);
-  assert.match(r.stdout, /all green/);
+  assert.match(r.stdout, /^ok {4}files {4}manifest matches the library files$/m);
+  assert.match(r.stdout, /^ok {4}index {4}2 sheets/m);
+  assert.match(r.stdout, /\n0 failed/);
 });
 
 test('usage errors and later-milestone commands exit non-zero with a message', () => {
   assert.match(refs('frobnicate').stderr, /unknown command/);
-  assert.match(refs('index').stderr, /milestone 2/);
+  assert.match(refs('review').stderr, /milestone 3/);
   assert.match(refs('search', '--bogus').stderr, /Unknown option/);
   assert.match(refs('open', 's_0001', '--section', 'two').stderr, /positive whole number/);
   assert.equal(refs('open', 's_9999').code, 1);
