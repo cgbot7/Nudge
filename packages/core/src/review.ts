@@ -32,7 +32,7 @@ export interface ReviewResult {
  * Confirm a pending sheet: it becomes verified with lastVerified today, takes the
  * chosen (or proposed) title and tags, and its proposal is dropped. New tags join tags.json.
  */
-export function acceptReview(config: Config, id: string, decision: ReviewDecision = {}): Promise<ReviewResult> {
+export function acceptReview(config: Config, id: string, decision: ReviewDecision = {}, opts: { waitMs?: number } = {}): Promise<ReviewResult> {
   return withLock('review', () => {
     const sheets = readManifest(config.library);
     const sheet = findById(sheets, id);
@@ -52,7 +52,7 @@ export function acceptReview(config: Config, id: string, decision: ReviewDecisio
     const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `refs: review ${id} (verified: ${tags.join(', ')})`);
     refreshHookCache(config);
     return { sheet, addedToVocab, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
-  });
+  }, opts);
 }
 
 export interface RetagReport {

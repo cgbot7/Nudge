@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyAgents, planAgents, type AgentPlan, type AgentTargets } from './agents.ts';
+import { applyAgents, backupName, planAgents, type AgentPlan, type AgentTargets } from './agents.ts';
+import { configDir } from './paths.ts';
 import { RefsError } from './util.ts';
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
@@ -15,6 +16,9 @@ export function repoPaths() {
     cli: path.join(REPO, 'packages', 'cli', 'src', 'main.ts'),
     mcp: path.join(REPO, 'packages', 'mcp', 'src', 'server.ts'),
     bin: path.join(REPO, 'bin'),
+    sidecar: path.join(REPO, 'packages', 'sidecar', 'src', 'main.ts'),
+    /** The built popup; REFS_POPUP_EXE points tests at a stand-in. */
+    popup: process.env.REFS_POPUP_EXE || path.join(REPO, 'apps', 'popup', 'src-tauri', 'target', 'release', 'refs-popup.exe'),
   };
 }
 
@@ -26,6 +30,15 @@ export function agentTargets(node = process.execPath): AgentTargets {
 
 export const HOOK_BEGIN = '# >>> refs hook (managed by refs install) >>>';
 export const HOOK_END = '# <<< refs hook <<<';
+
+/** HKCU Run key that starts the popup at logon. Overridable so tests use a scratch key. */
+export function runKey(): string {
+  return process.env.REFS_RUN_KEY || 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+}
+
+export function runValueName(): string {
+  return process.env.REFS_RUN_VALUE_NAME || 'refs popup';
+}
 
 /** Overridable so tests never see or touch the real scheduled task. */
 export function taskName(): string {
@@ -54,6 +67,11 @@ export interface SystemOps {
   findClaude(): string | null;
   /** Run claude.exe with these arguments, no shell. Throws on failure. */
   runClaude(claude: string, args: string[]): void;
+  /** A value under runKey(), or null when it is not there. */
+  readRunValue(name: string): string | null;
+  writeRunValue(name: string, value: string): void;
+  /** reg export of runKey() to a .reg file, a backup you can double-click to restore. */
+  exportRunKey(file: string): void;
 }
 
 const INFO_SCRIPT = `
@@ -131,6 +149,19 @@ export function realSystem(): SystemOps {
       const r = spawnSync(claude, args, { encoding: 'utf8', windowsHide: true });
       if (r.error || r.status !== 0) throw new RefsError(`claude ${args.slice(0, 2).join(' ')} failed: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
     },
+    readRunValue(name) {
+      const r = spawnSync('reg.exe', ['query', runKey(), '/v', name], { encoding: 'utf8', windowsHide: true });
+      return r.status === 0 ? parseRegQuery(r.stdout, name) : null;
+    },
+    writeRunValue(name, value) {
+      const r = spawnSync('reg.exe', ['add', runKey(), '/v', name, '/t', 'REG_SZ', '/d', value, '/f'], { encoding: 'utf8', windowsHide: true });
+      if (r.error || r.status !== 0) throw new RefsError(`could not write "${name}" in ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+    },
+    exportRunKey(file) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const r = spawnSync('reg.exe', ['export', runKey(), file, '/y'], { encoding: 'utf8', windowsHide: true });
+      if (r.error || r.status !== 0) throw new RefsError(`could not back up ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+    },
     createTask(name, xml) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-task-'));
       const file = path.join(dir, 'task.xml');
@@ -143,6 +174,47 @@ export function realSystem(): SystemOps {
       }
     },
   };
+}
+
+/** The data of value `name` in reg query output ("    <name>    REG_SZ    <data>"). */
+export function parseRegQuery(stdout: string, name: string): string | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /^ {4}(.+?) {4}(REG_\w+)(?: {4}(.*))?$/.exec(line);
+    if (m && m[1]!.toLowerCase() === name.toLowerCase()) return m[3] ?? '';
+  }
+  return null;
+}
+
+/** What the Run value holds: the popup, with the Node and sidecar script it starts. */
+export function popupCommand(exe = repoPaths().popup, node = process.execPath, sidecar = repoPaths().sidecar): string {
+  return `"${exe}" --node "${node}" --sidecar "${sidecar}"`;
+}
+
+export interface PopupPlan {
+  key: string;
+  name: string;
+  exe: string;
+  /** skip: the popup is not built yet. none: the value already holds this command. */
+  action: 'create' | 'update' | 'none' | 'skip';
+  note?: string;
+  before: string | null;
+  after: string;
+  /** .reg export of the Run key, written before an existing value is replaced. */
+  backup: string | null;
+}
+
+/** Start the popup at logon through a value in the HKCU Run key (Task Manager lists it under Startup apps). */
+export function planPopupLogon(sys: SystemOps, now = new Date()): PopupPlan {
+  const { popup } = repoPaths();
+  const name = runValueName();
+  const before = sys.readRunValue(name);
+  const after = popupCommand();
+  const base = { key: runKey(), name, exe: popup, before, after, backup: null };
+  if (!fs.existsSync(popup)) return { ...base, action: 'skip', note: `the popup is not built yet (${popup}); run npm run popup:build, then refs install again` };
+  // Windows paths compare case-insensitively.
+  if (before !== null && before.toLowerCase() === after.toLowerCase()) return { ...base, action: 'none' };
+  if (before === null) return { ...base, action: 'create' };
+  return { ...base, action: 'update', backup: backupName(path.join(configDir(), 'backups', 'run-key.reg'), now) };
 }
 
 /** CurrentUserAllHosts profiles, so the hook also loads in editor terminals. */
@@ -284,6 +356,7 @@ export interface InstallPlan {
   /** current: registered with the same command, arguments, schedule and user, so it is left alone. */
   task: { name: string; exists: boolean; current: boolean; spec: TaskSpec; xml: string };
   agents: AgentPlan;
+  popup: PopupPlan;
   path: { dir: string; kind: string; before: string | null; after: string | null };
   warnings: string[];
 }
@@ -322,6 +395,7 @@ export function planInstall(sys: SystemOps): InstallPlan {
     block: hookBlock(hook),
     task: { name, exists: existing !== null, current: existing !== null && taskSignature(existing) === taskSignature(xml), spec, xml },
     agents: planAgents(agentTargets(), sys.findClaude()),
+    popup: planPopupLogon(sys),
     path: { dir: bin, kind: info.userPath?.kind ?? 'ExpandString', before, after },
     warnings,
   };
@@ -346,6 +420,12 @@ export function applyInstall(plan: InstallPlan, sys: SystemOps): string[] {
     done.push(`added ${plan.path.dir} to your user PATH (new terminals see it)`);
   }
   done.push(...applyAgents(plan.agents, (claude, args) => sys.runClaude(claude, args)));
+  const p = plan.popup;
+  if (p.action === 'create' || p.action === 'update') {
+    if (p.backup) sys.exportRunKey(p.backup);
+    sys.writeRunValue(p.name, p.after);
+    done.push(`${p.action === 'create' ? 'added' : 'updated'} "${p.name}" in ${p.key}: the popup starts at your next logon${p.backup ? `; backup ${p.backup}` : ''}`);
+  }
   return done;
 }
 
@@ -353,6 +433,8 @@ export interface InstallStatus {
   /** Profiles that contain the marked block. */
   hookIn: string[];
   scheduled: boolean;
+  /** The popup's Run value, and whether it starts this checkout's popup. */
+  popupLogon: { value: string | null; current: boolean };
   info: SystemInfo;
 }
 
@@ -361,5 +443,7 @@ export function installStatus(sys: SystemOps): InstallStatus {
   const hookIn = profileFiles(info.documents)
     .filter(({ file }) => fs.existsSync(file) && decodeProfile(fs.readFileSync(file)).text.includes(HOOK_BEGIN))
     .map(({ file }) => file);
-  return { hookIn, scheduled: sys.taskExists(taskName()), info };
+  const value = sys.readRunValue(runValueName());
+  const popupLogon = { value, current: value !== null && value.toLowerCase() === popupCommand().toLowerCase() };
+  return { hookIn, scheduled: sys.taskExists(taskName()), popupLogon, info };
 }

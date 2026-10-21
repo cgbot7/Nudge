@@ -7,8 +7,10 @@ import { gitAvailable, isRepoRoot } from './git.ts';
 import { readHookCache } from './hookcache.ts';
 import { inboxCounts } from './inbox.ts';
 import { agentPaths, agentStatus } from './agents.ts';
-import { agentTargets, installStatus, realSystem, taskName, type SystemOps } from './install.ts';
+import { parseHotkey } from './hotkey.ts';
+import { agentTargets, installStatus, repoPaths, runKey, runValueName, realSystem, taskName, type SystemOps } from './install.ts';
 import { probeMcpServer } from './mcpprobe.ts';
+import { pingSidecar } from './sidecarprobe.ts';
 import { sheetAbsPath } from './library.ts';
 import { lockStatus } from './lock.ts';
 import { readManifest, type Sheet } from './manifest.ts';
@@ -58,7 +60,30 @@ export async function runDoctor(sys: SystemOps = realSystem()): Promise<Check[]>
   await ollamaChecks(config, add);
   aiLibraryChecks(config, add);
   await agentChecks(add, sys);
+  await popupChecks(config, add, sys);
   return checks;
+}
+
+async function popupChecks(config: Config, add: Add, sys: SystemOps): Promise<void> {
+  const { popup, sidecar } = repoPaths();
+  if (fs.existsSync(popup)) add('ok', 'popup', `built: ${popup} (${fs.statSync(popup).mtime.toISOString().slice(0, 16).replace('T', ' ')})`);
+  else add('warn', 'popup', `not built (${popup}); run npm run popup:build`);
+
+  try {
+    const { popupLogon } = installStatus(sys);
+    if (popupLogon.current) add('ok', 'logon', `"${runValueName()}" in ${runKey()} starts this popup`);
+    else if (popupLogon.value === null) add('warn', 'logon', `the popup does not start at logon ("${runValueName()}" is not in ${runKey()}); run refs install`);
+    else add('warn', 'logon', `"${runValueName()}" in ${runKey()} starts something else (${popupLogon.value}); run refs install to update it`);
+  } catch (e) {
+    add('warn', 'logon', errorMessage(e));
+  }
+
+  const hotkey = parseHotkey(config.hotkey);
+  if (hotkey.ok) add('ok', 'hotkey', hotkey.canonical === config.hotkey ? hotkey.canonical : `${config.hotkey} (as ${hotkey.canonical})`);
+  else add('fail', 'hotkey', `config.json "hotkey": ${hotkey.error}. The popup falls back to Ctrl+Alt+Space`);
+
+  const ping = await pingSidecar(process.execPath, sidecar);
+  add(ping.ok ? 'ok' : 'fail', 'sidecar', ping.ok ? `starts and answers ping in ${ping.ms} ms` : `${sidecar}: ${ping.error}`);
 }
 
 export const MCP_TOOLS = ['refs_search', 'refs_get', 'refs_for_project'];

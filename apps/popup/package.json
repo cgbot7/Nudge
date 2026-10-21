@@ -1,0 +1,9 @@
+{
+  "name": "@refs/popup",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "vue": "3.5.43"
+  }
+}

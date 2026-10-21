@@ -1,0 +1,13 @@
+{
+  "name": "@refs/sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "refs-sidecar": "src/main.ts"
+  },
+  "dependencies": {
+    "@refs/core": "0.1.0",
+    "markdown-it": "15.0.2"
+  }
+}

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -100,6 +101,14 @@ export function slugify(title: string, max = 60): string {
 export function titleFromFilename(file: string): string {
   const base = path.basename(file, path.extname(file)).replace(/[-_.]+/g, ' ').replace(/\s+/g, ' ').trim();
   return base ? base[0]!.toUpperCase() + base.slice(1) : 'Untitled';
+}
+
+/**
+ * Open a file in its associated app, or a URL in the default browser. explorer.exe takes
+ * the target as one argument, so no shell quoting is involved.
+ */
+export function openInDefaultApp(target: string): void {
+  spawn('explorer.exe', [target], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
 }
 
 export function sleep(ms: number): Promise<void> {

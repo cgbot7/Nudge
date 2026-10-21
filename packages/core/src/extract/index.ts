@@ -73,6 +73,14 @@ export async function extract(format: SheetFormat, buf: Buffer, opts: ExtractOpt
   }
 }
 
+/** PNGs of the first `max` PDF pages that have no text layer (the ones OCR read), for the popup preview. */
+export async function scannedPagePreviews(buf: Buffer, max: number, scale = 1.5): Promise<{ page: number; png: Buffer }[]> {
+  const { extractPdfPages, renderPdfPages } = await import('./pdf.ts');
+  const pages = (await extractPdfPages(buf)).flatMap((p, i) => (p ? [] : [i + 1])).slice(0, max);
+  const pngs = await renderPdfPages(buf, pages, scale);
+  return pages.map((page, i) => ({ page, png: pngs[i]! }));
+}
+
 /** OCR the pages without a text layer (up to ocrMaxPages) and merge them in page order. */
 async function ocrPdfPages(buf: Buffer, pages: string[], empty: number[], opts: ExtractOptions): Promise<Extracted> {
   if (!opts.ocr) await ocrImage(null, buf); // throws OcrUnavailableError

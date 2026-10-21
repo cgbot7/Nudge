@@ -14,5 +14,5 @@
     "noImplicitOverride": true,
     "skipLibCheck": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/popup/build.ts", "apps/popup/test/**/*.ts"]
 }

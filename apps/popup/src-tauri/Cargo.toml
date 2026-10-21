@@ -1,0 +1,28 @@
+[package]
+name = "refs-popup"
+version = "0.1.0"
+description = "refs hotkey popup"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "=2.4.0"
+tauri-plugin-single-instance = "=2.5.2"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[features]
+# Serve the embedded frontend (what the Tauri CLI turns on for release builds).
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 4
+lto = "thin"
+opt-level = "s"
+strip = true

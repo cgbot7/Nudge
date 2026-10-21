@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -29,6 +28,7 @@ import {
   logUsage,
   ollamaClient,
   openDb,
+  openInDefaultApp,
   parseTagList,
   pendingSheets,
   planInstall,
@@ -89,7 +89,7 @@ Usage:
   refs ignore-gap <tag> [--project] [--undo]
                                          silence a gap everywhere, or only in this project
   refs allow <file> --finding <n>        allowlist a secret-scan false positive
-  refs install [--dry-run] [--yes]       PowerShell hook, Task Scheduler job, refs on PATH,
+  refs install [--dry-run] [--yes]       PowerShell hook, Task Scheduler job, popup at logon, refs on PATH,
                                          Claude Code hook and MCP server, OpenCode MCP and plugin
   refs doctor                            check config, library, index, rules, hook and schedule
   refs help
@@ -362,12 +362,6 @@ async function cmdSearch(args: string[]): Promise<number> {
   const boost = result.boostTags.length ? `, boosted for ${result.boostTags.join(', ')}` : '';
   out(dim(`\n${result.mode === 'hybrid' ? 'hybrid' : 'keyword only'}, ${result.tookMs} ms${boost}${result.hits.length ? '. open one: refs open <id> --section <n>' : ''}`));
   return 0;
-}
-
-function openInDefaultApp(file: string): void {
-  // explorer.exe opens a file with its associated app and takes the path as one
-  // argument, so no shell quoting is involved.
-  spawn('explorer.exe', [file], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
 }
 
 async function cmdOpen(args: string[]): Promise<number> {
@@ -698,7 +692,17 @@ async function cmdInstall(args: string[]): Promise<number> {
   printEdit('config', a.opencodeConfig, 'add mcp.refs');
   printEdit('plugin', a.opencodePlugin, 'write a plugin that adds refs context to each session (experimental.chat.system.transform)');
   out('');
-  out(dim('Not touched: execution policy, other profiles, system PATH, any other agent setting.'));
+  const p = plan.popup;
+  out(`6. Popup at logon (${p.key}, value "${p.name}"; Task Manager lists it under Startup apps):`);
+  if (p.action === 'skip') out(`   skipped: ${p.note}`);
+  else if (p.action === 'none') out('   no change, already starts this popup');
+  else {
+    out(`   ${p.action === 'create' ? 'add the value' : 'replace the value'}${p.backup ? `; back up the Run key first to ${p.backup}` : ''}`);
+    if (p.before !== null) out(`   before: ${p.before}`);
+    out(`   ${p.before !== null ? 'after: ' : 'value: '}${p.after}`);
+  }
+  out('');
+  out(dim('Not touched: execution policy, other profiles, system PATH, any other agent setting, other startup items.'));
   for (const w of plan.warnings) warn(w);
   if (values['dry-run']) {
     out(dim('\ndry run: nothing was changed.'));

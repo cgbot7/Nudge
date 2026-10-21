@@ -95,8 +95,9 @@ function makeLock(file: string): Lock {
   return { release };
 }
 
-export async function withLock<T>(command: string, fn: () => Promise<T> | T): Promise<T> {
-  const lock = await acquireLock({ command });
+/** Runs `fn` holding the lock; `waitMs` defaults to the CLI's 10 s (the popup asks for less). */
+export async function withLock<T>(command: string, fn: () => Promise<T> | T, opts: { waitMs?: number } = {}): Promise<T> {
+  const lock = await acquireLock({ command, waitMs: opts.waitMs });
   try {
     return await fn();
   } finally {

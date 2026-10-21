@@ -19,7 +19,13 @@ export interface SheetChange {
   commitError?: string;
 }
 
-function updateSheet(config: Config, command: string, id: string, apply: (s: Sheet) => boolean, message: (s: Sheet) => string): Promise<SheetChange> {
+/** Who asked (for usage.jsonl) and how long to wait for the lock (default 10 s). */
+export interface ActionOptions {
+  via?: 'cli' | 'popup';
+  waitMs?: number;
+}
+
+function updateSheet(config: Config, command: string, id: string, apply: (s: Sheet) => boolean, message: (s: Sheet) => string, opts: ActionOptions = {}): Promise<SheetChange> {
   return withLock(command, () => {
     const sheets = readManifest(config.library);
     const sheet = findById(sheets, id);
@@ -29,11 +35,11 @@ function updateSheet(config: Config, command: string, id: string, apply: (s: She
     const commit = commitPaths(config.library, ['manifest.json'], message(sheet));
     refreshHookCache(config);
     return { sheet, changed: true, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
-  });
+  }, opts);
 }
 
 /** refs learned <id> [--undo]: learned sheets are never offered as reminders again. */
-export async function setLearned(config: Config, id: string, learned: boolean): Promise<SheetChange> {
+export async function setLearned(config: Config, id: string, learned: boolean, opts: ActionOptions = {}): Promise<SheetChange> {
   const result = await updateSheet(
     config,
     'learned',
@@ -44,13 +50,14 @@ export async function setLearned(config: Config, id: string, learned: boolean): 
       return true;
     },
     (s) => `refs: mark ${s.id} ${learned ? 'learned' : 'not learned'}`,
+    opts,
   );
-  if (result.changed && learned) logUsage({ event: 'learned', id, via: 'cli' });
+  if (result.changed && learned) logUsage({ event: 'learned', id, via: opts.via ?? 'cli' });
   return result;
 }
 
 /** refs verify <id>: lastVerified becomes today, which clears stale. Status is unchanged. */
-export function verifySheet(config: Config, id: string): Promise<SheetChange> {
+export function verifySheet(config: Config, id: string, opts: ActionOptions = {}): Promise<SheetChange> {
   const date = today();
   return updateSheet(
     config,
@@ -62,6 +69,7 @@ export function verifySheet(config: Config, id: string): Promise<SheetChange> {
       return true;
     },
     (s) => `refs: verify ${s.id}`,
+    opts,
   );
 }
 
@@ -77,12 +85,12 @@ export interface ApproveResult extends SheetChange {
  * A pending sheet takes its proposed tags (as refs review --accept does). Drafts keep
  * source llm and their llm record as provenance.
  */
-export async function approveSheet(config: Config, id: string): Promise<ApproveResult> {
+export async function approveSheet(config: Config, id: string, opts: ActionOptions = {}): Promise<ApproveResult> {
   const before = findById(readManifest(config.library), id);
   if (!before) throw new RefsError(`no sheet with id ${id}.`);
   if (before.status === 'pending') {
     if (!before.tags.length && !before.proposal?.tags.length) throw new RefsError(`${id} has no tags yet; give them with refs review ${id} --tags a,b.`);
-    const r = await acceptReview(config, id, before.tags.length && !before.proposal?.tags.length ? { tags: before.tags } : {});
+    const r = await acceptReview(config, id, before.tags.length && !before.proposal?.tags.length ? { tags: before.tags } : {}, opts);
     return { sheet: r.sheet, changed: true, from: 'pending', addedToVocab: r.addedToVocab, commitError: r.commitError };
   }
   return withLock('approve', () => {
@@ -99,7 +107,7 @@ export async function approveSheet(config: Config, id: string): Promise<ApproveR
     const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `refs: approve ${id} (draft to verified)`);
     refreshHookCache(config);
     return { sheet, changed: true, from, addedToVocab, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
-  });
+  }, opts);
 }
 
 export interface IgnoreGapResult {

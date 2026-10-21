@@ -51,6 +51,10 @@ export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, un
     REFS_TASK_NAME: `refs-test-${path.basename(root)}`,
     // Fake home for Claude Code and OpenCode configs; the real ones are never read or written.
     REFS_HOME_DIR: path.join(root, 'home'),
+    // The popup's logon entry goes to a scratch key, and doctor looks for a popup that is not there.
+    REFS_RUN_KEY: `HKCU\\Software\\refs-test\\${path.basename(root)}`,
+    REFS_RUN_VALUE_NAME: 'refs popup test',
+    REFS_POPUP_EXE: path.join(root, 'popup', 'refs-popup.exe'),
   };
   Object.assign(process.env, env);
   fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
@@ -63,8 +67,15 @@ export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, un
  * A SystemOps that never touches the machine; records what install would do. Its claude.exe
  * edits mcpServers in the fake home's .claude.json the way `claude mcp add-json` would.
  */
-export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: boolean; path?: string | null; taskExists?: boolean; claude?: string | null } = {}) {
-  const calls: { writeUserPath: string[]; createTask: { name: string; xml: string }[]; claude: string[][] } = { writeUserPath: [], createTask: [], claude: [] };
+export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: boolean; path?: string | null; taskExists?: boolean; claude?: string | null; run?: Record<string, string> } = {}) {
+  const calls: { writeUserPath: string[]; createTask: { name: string; xml: string }[]; claude: string[][]; writeRunValue: [string, string][]; exportRunKey: string[] } = {
+    writeUserPath: [],
+    createTask: [],
+    claude: [],
+    writeRunValue: [],
+    exportRunKey: [],
+  };
+  const run = new Map<string, string>(Object.entries(opts.run ?? {}));
   let pathValue = opts.path === undefined ? '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps' : opts.path;
   let task = opts.taskExists ?? false;
   let taskXml: string | null = task ? '<Task><Command>other.exe</Command></Task>' : null;
@@ -86,6 +97,16 @@ export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: bo
       calls.createTask.push({ name, xml });
       task = true;
       taskXml = xml;
+    },
+    readRunValue: (name: string) => run.get(name) ?? null,
+    writeRunValue(name: string, value: string) {
+      calls.writeRunValue.push([name, value]);
+      run.set(name, value);
+    },
+    exportRunKey(file: string) {
+      calls.exportRunKey.push(file);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, [...run].map(([k, v]) => `"${k}"=${JSON.stringify(v)}`).join('\n'));
     },
     findClaude: () => (opts.claude === undefined ? 'C:\fake\claude.exe' : opts.claude),
     runClaude(_claude: string, args: string[]) {

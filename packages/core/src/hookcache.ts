@@ -138,6 +138,36 @@ export function readLastProjectTags(): string[] {
   }
 }
 
+export interface LastProject {
+  /** Path key of the project root. */
+  key: string;
+  path: string;
+  tags: string[];
+  /** When the prompt hook last saw you enter it. */
+  at: Date | null;
+  /** False when the hook cache no longer lists the project (its tags come from last-project.json then). */
+  cached: boolean;
+}
+
+/**
+ * The project the prompt hook last saw you enter (last-project.json, written only by the
+ * hook), with its tags taken fresh from the hook cache. Null when the file is missing or
+ * unreadable. Its age is not a reason to drop it: a terminal can stay in one project for days.
+ */
+export function readLastProject(cache: HookCache | null = readHookCache()): LastProject | null {
+  let raw: { key?: unknown; path?: unknown; tags?: unknown; at?: unknown };
+  try {
+    raw = JSON.parse(decodeText(fs.readFileSync(dataPaths().lastProject)));
+  } catch {
+    return null;
+  }
+  if (typeof raw.key !== 'string' || !raw.key) return null;
+  const entry = cache?.projects.find((p) => p.key === raw.key);
+  const fileTags = Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === 'string') : [];
+  const at = typeof raw.at === 'string' && !Number.isNaN(Date.parse(raw.at)) ? new Date(raw.at) : null;
+  return { key: raw.key, path: typeof raw.path === 'string' ? raw.path : raw.key, tags: entry?.tags ?? fileTags, at, cached: !!entry };
+}
+
 export function newHookCache(roots: string[], projects: ProjectEntry[], now = new Date()): HookCache {
   return { version: 1, generatedAt: now.toISOString(), roots: roots.map(pathKey), projects };
 }
