@@ -20,7 +20,19 @@ process.on('exit', () => {
   for (const root of sandboxes) fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
 });
 
-export function setupEnv(): TestEnv {
+// Safety net: a test that reaches for the real Ollama port fails loudly instead.
+const realFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.port === '11434') throw new Error(`test tried to reach the real Ollama at ${url.origin}`);
+  return realFetch(input, init);
+};
+
+/** Nothing listens on the discard port, so a sandbox without a fake server sees Ollama as down. */
+export const DEAD_OLLAMA = 'http://127.0.0.1:9';
+
+/** Sandboxes never use the real Ollama: they get DEAD_OLLAMA unless a test passes its fake server's URL. */
+export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, unknown> } = {}): TestEnv {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-test-'));
   sandboxes.push(root);
   const library = path.join(root, 'library');
@@ -40,7 +52,8 @@ export function setupEnv(): TestEnv {
   };
   Object.assign(process.env, env);
   fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
-  fs.writeFileSync(path.join(env.APPDATA!, 'refs', 'config.json'), JSON.stringify({ library: library.replace(/\\/g, '/') }));
+  const ollama = { host: opts.ollamaHost ?? DEAD_OLLAMA, embedModel: 'fake-embed', chatModel: 'fake-chat', visionModel: 'fake-vision', ...opts.ollama };
+  fs.writeFileSync(path.join(env.APPDATA!, 'refs', 'config.json'), JSON.stringify({ library: library.replace(/\\/g, '/'), ollama }));
   return { root, library, work, env: { ...process.env, ...env } };
 }
 

@@ -99,7 +99,7 @@ test('a missing sheet stays in the manifest, leaves the index, and doctor report
   assert.equal(readManifest(t.library).length, 1, 'never silently removed');
   assert.deepEqual(search('stopped containers'), []);
 
-  const checks = runDoctor(fakeSystem(t.env.REFS_DOCUMENTS_DIR!).sys);
+  const checks = await runDoctor(fakeSystem(t.env.REFS_DOCUMENTS_DIR!).sys);
   assert.ok(checks.some((c) => c.status === 'fail' && c.name === 'files' && /missing from the library: s_0001/.test(c.detail)));
   assert.ok(checks.some((c) => c.status === 'warn' && c.name === 'files' && /unrelated\.md/.test(c.detail)));
 });

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, test } from 'node:test';
 import { openDb } from '../src/db.ts';
+import { OcrUnavailableError } from '../src/extract/image.ts';
 import { addFile, allowFinding, moveFile } from '../src/import.ts';
 import { acquireLock, LockBusyError } from '../src/lock.ts';
 import { readManifest } from '../src/manifest.ts';
@@ -117,25 +118,27 @@ test('imports DOCX with Word headings as sections', async () => {
   assert.match(fs.readFileSync(path.join(dataPaths().extractCache, `${r.sheet.sha256}.txt`), 'utf8'), /<tags> & entities/);
 });
 
-test('imports text PDFs page by page and rejects scanned ones', async () => {
-  const pdf = makePdf([['Kubernetes quick reference', 'kubectl get pods lists pods'], [], ['kubectl logs shows container output']]);
+test('imports text PDFs page by page; pages without a text layer need OCR', async () => {
+  const pdf = makePdf([['Kubernetes quick reference', 'kubectl get pods lists pods'], ['kubectl logs shows container output']]);
   const r = await addFile(t.library, write(t.work, 'k8s-ref.pdf', pdf));
   assert.equal(r.kind, 'added');
   if (r.kind !== 'added') return;
   assert.equal(r.sheet.title, 'K8s ref');
   assert.equal(r.sections, 2);
-  assert.ok(r.warnings.some((w) => /1 of 3 PDF pages have no text layer/.test(w)));
-  assert.equal(search('kubectl logs')[0]?.heading, 'Page 3');
+  assert.equal(search('kubectl logs')[0]?.heading, 'Page 2');
 
-  const scanned = write(t.work, 'scan.pdf', makePdf([[]]));
-  await assert.rejects(addFile(t.library, scanned), /no text layer/);
-  assert.ok(fs.existsSync(scanned));
+  // Ollama is down in this sandbox: a scanned page cannot be OCR'd or secret-scanned, so nothing moves.
+  const mixed = write(t.work, 'mixed.pdf', makePdf([['some text'], []]));
+  await assert.rejects(addFile(t.library, mixed), OcrUnavailableError);
+  assert.ok(fs.existsSync(mixed));
 });
 
-test('rejects Office lock files, unsupported types and images (OCR is milestone 3)', async () => {
+test('rejects Office lock files, unsupported types, and images while OCR is unavailable', async () => {
   await assert.rejects(addFile(t.library, write(t.work, '~$notes.docx', 'x')), /Office lock file/);
   await assert.rejects(addFile(t.library, write(t.work, 'a.exe', 'x')), /unsupported file type/);
-  await assert.rejects(addFile(t.library, write(t.work, 'shot.png', 'x')), /milestone 3/);
+  const shot = write(t.work, 'shot.png', 'x');
+  await assert.rejects(addFile(t.library, shot), /images need OCR/);
+  assert.ok(fs.existsSync(shot), 'left in place');
   await assert.rejects(addFile(t.library, path.join(t.work, 'missing.md')), /file not found/);
 });
 

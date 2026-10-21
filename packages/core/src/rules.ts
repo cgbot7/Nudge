@@ -133,6 +133,20 @@ export function readTagVocab(library: string): TagVocab {
   return parsed.data;
 }
 
+/**
+ * Add tags confirmed in review to tags.json (no aliases yet). Returns the ones added;
+ * the caller commits tags.json when the list is not empty.
+ */
+export function addTagsToVocab(library: string, tags: string[]): string[] {
+  const vocab = readTagVocab(library);
+  const canonical = tagResolver(vocab);
+  const added = [...new Set(tags.map(normalizeTag))].filter((t) => t && !(t in vocab) && canonical(t) === t);
+  if (!added.length) return [];
+  for (const t of added) vocab[t] = { aliases: [] };
+  writeFileAtomic(tagsPath(library), JSON.stringify(vocab, null, 2) + '\n');
+  return added;
+}
+
 /** Maps any tag or alias to its canonical tag. */
 export function tagResolver(vocab: TagVocab): (tag: string) => string {
   const alias = new Map<string, string>();

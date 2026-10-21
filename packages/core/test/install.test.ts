@@ -95,18 +95,18 @@ test('install plans, applies and is idempotent; existing profiles are backed up 
   assert.equal(status.scheduled, true);
 });
 
-test('doctor reports hook and schedule state', () => {
+test('doctor reports hook and schedule state', async () => {
   const { sys } = fakeSystem(docs, { policy: 'Restricted' });
-  const find = (name: string) => runDoctor(sys).find((c) => c.name === name);
-  assert.equal(find('hook')?.status, 'warn');
-  assert.equal(find('schedule')?.status, 'warn');
-  assert.equal(find('cache')?.status, 'warn');
+  const find = async (name: string) => (await runDoctor(sys)).find((c) => c.name === name);
+  assert.equal((await find('hook'))?.status, 'warn');
+  assert.equal((await find('schedule'))?.status, 'warn');
+  assert.equal((await find('cache'))?.status, 'warn');
 
   applyInstall(planInstall(sys), sys);
-  assert.equal(find('hook')?.status, 'ok');
-  assert.equal(find('schedule')?.status, 'ok');
+  assert.equal((await find('hook'))?.status, 'ok');
+  assert.equal((await find('schedule'))?.status, 'ok');
 
   fs.mkdirSync(path.join(t.env.LOCALAPPDATA!, 'refs'), { recursive: true });
   fs.writeFileSync(path.join(t.env.LOCALAPPDATA!, 'refs', 'hook-cache.json'), '{not json');
-  assert.equal(find('cache')?.status, 'fail');
+  assert.equal((await find('cache'))?.status, 'fail');
 });

@@ -14,6 +14,29 @@ export const AllowEntrySchema = z.object({
 });
 export type AllowEntry = z.infer<typeof AllowEntrySchema>;
 
+/** LLM title and tag proposal waiting in the review queue (pending sheets only). */
+export const ProposalSchema = z.object({
+  title: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  /** Proposed tags not yet in tags.json or on any sheet: accepting them adds them to tags.json. */
+  newTags: z.array(z.string()).default([]),
+  model: z.string(),
+  at: isoDate,
+  /** Set when the model gave no usable answer; review then asks for tags directly. */
+  error: z.string().optional(),
+});
+export type Proposal = z.infer<typeof ProposalSchema>;
+
+/** Present when the text came from OCR, which can mangle code and commands. */
+export const OcrInfoSchema = z.object({
+  model: z.string(),
+  at: isoDate,
+  /** Scanned PDF pages that were OCR'd, and how many pages had no text layer in all. */
+  pages: z.number().int().nonnegative().optional(),
+  scannedPages: z.number().int().nonnegative().optional(),
+});
+export type OcrInfo = z.infer<typeof OcrInfoSchema>;
+
 // Loose so fields added by hand or by later milestones survive a rewrite.
 export const SheetSchema = z.looseObject({
   id: z.string().regex(/^s_\d{4,}$/, 'expected s_0000'),
@@ -29,6 +52,8 @@ export const SheetSchema = z.looseObject({
   lastVerified: isoDate,
   updatedAt: isoDate,
   secretAllowlist: z.array(AllowEntrySchema).default([]),
+  proposal: ProposalSchema.optional(),
+  ocr: OcrInfoSchema.optional(),
 });
 export type Sheet = z.infer<typeof SheetSchema>;
 

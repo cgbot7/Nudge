@@ -5,25 +5,33 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import {
+  OcrUnavailableError,
   RefsError,
+  acceptReview,
   addFile,
   allowFinding,
   applyInstall,
   blockingFindings,
+  connectAi,
   dataPaths,
   ensureConfigFile,
   errorMessage,
   findById,
   forTarget,
   hookLine,
+  hybridSearch,
   ignoreGap,
-  keywordSearch,
+  inboxDir,
   loadConfig,
   logUsage,
+  ollamaClient,
   openDb,
   parseTagList,
+  pendingSheets,
   planInstall,
+  readLastProjectTags,
   readManifest,
+  readTagVocab,
   realSystem,
   runDoctor,
   runIndex,
@@ -31,10 +39,15 @@ import {
   setLearned,
   sheetAbsPath,
   sheetSections,
+  tagResolver,
   tryRefreshHookCache,
   verifySheet,
+  type AiServices,
+  type Config,
+  type ExtractOptions,
   type IndexReport,
   type SearchHit,
+  type Sheet,
   type SheetInfo,
 } from '@refs/core';
 
@@ -49,10 +62,13 @@ const yellow = ansi(33, 39);
 const HELP = `refs: personal cheat sheet index
 
 Usage:
-  refs add <file> [--tags a,b] [--yes]   import one file (md, txt, docx, pdf)
-  refs index [--rebuild]                 sync library changes, update the index, scan projects,
-                                         write the hook cache (--rebuild: recreate index.db)
-  refs search <query> [--tags a,b] [--limit n] [--json]
+  refs add <file> [--tags a,b] [--yes]   import one file (md, txt, docx, pdf, png, jpg)
+  refs index [--rebuild]                 import the inbox, sync library changes, update the index
+                                         and embeddings, scan projects, write the hook cache
+                                         (--rebuild: recreate index.db)
+  refs review                            confirm or edit proposed titles and tags of pending sheets
+    [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]]
+  refs search <query> [--tags a,b] [--limit n] [--keyword] [--json]
   refs for <path | "tag tag"> [--json]   sheets by tag, gaps and unused reminders
   refs scan [path]                       re-detect one project, rewrite its hook cache entry
   refs open <id> [--section <n>] [--app] print a sheet or section; --app opens the default app
@@ -65,10 +81,11 @@ Usage:
   refs doctor                            check config, library, index, rules, hook and schedule
   refs help
 
-Projects are detected under the "roots" folders in config.json.
-Coming in later milestones: review (3); context, suggest, approve (4).`;
+Projects are detected under the "roots" folders in config.json. Drop files into the
+library's inbox folder and refs index imports them.
+Coming in milestone 4: context, suggest, approve.`;
 
-const LATER: Record<string, number> = { review: 3, context: 4, suggest: 4, approve: 4 };
+const LATER: Record<string, number> = { context: 4, suggest: 4, approve: 4 };
 
 function out(line = ''): void {
   process.stdout.write(line + '\n');
@@ -98,6 +115,16 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
+function extractOptions(cfg: Config, ai: AiServices | null): ExtractOptions {
+  return {
+    ocr: ai?.ocr ?? null,
+    ocrMaxPages: cfg.ocrMaxPages,
+    confirmPartialOcr: process.stdin.isTTY
+      ? (scanned, max) => confirm(`${scanned} pages have no text layer, more than ocrMaxPages (${max}). OCR the first ${max} pages only?`)
+      : undefined,
+  };
+}
+
 async function cmdAdd(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
@@ -107,21 +134,41 @@ async function cmdAdd(args: string[]): Promise<number> {
   if (positionals.length !== 1) throw new RefsError('usage: refs add <file> [--tags a,b] [--yes]');
   const loaded = loadConfig();
   if (ensureConfigFile(loaded.config)) out(dim(`created config at ${loaded.path}`));
+  const cfg = loaded.config;
+  const tags = parseTagList(values.tags);
+  const ai = await connectAi(cfg);
 
-  const result = await addFile(loaded.config.library, positionals[0]!, {
-    tags: parseTagList(values.tags),
-    yes: values.yes,
-    confirm: process.stdin.isTTY ? confirm : undefined,
-  });
+  let result;
+  try {
+    result = await addFile(cfg.library, positionals[0]!, {
+      tags,
+      yes: values.yes,
+      confirm: process.stdin.isTTY ? confirm : undefined,
+      extract: extractOptions(cfg, ai),
+      propose: tags.length ? null : ai.propose,
+    });
+  } catch (e) {
+    if (e instanceof OcrUnavailableError) {
+      throw new RefsError(`${e.message}. Nothing was moved. Start Ollama and run refs add again, or drop the file into ${inboxDir(cfg.library)} and refs index imports it once Ollama is up.`);
+    }
+    throw e;
+  }
 
   switch (result.kind) {
     case 'added': {
       const { sheet } = result;
       for (const n of result.notes) out(dim(n));
       for (const w of result.warnings) warn(w);
-      out(`${green('added')} ${bold(sheet.id)} "${sheet.title}" (${sheet.format}, ${result.sections} section${result.sections === 1 ? '' : 's'})`);
+      const ocr = sheet.ocr ? ', OCR' : '';
+      out(`${green('added')} ${bold(sheet.id)} "${sheet.title}" (${sheet.format}${ocr}, ${result.sections} section${result.sections === 1 ? '' : 's'})`);
       out(`  ${sheet.file}`);
-      out(sheet.tags.length ? `  tags: ${sheet.tags.join(', ')}` : `  tags: none yet, status pending (add with --tags next time)`);
+      if (sheet.tags.length) out(`  tags: ${sheet.tags.join(', ')}`);
+      else if (result.queued) out(`  tags: none yet, status pending (${result.queued}; refs index proposes tags once Ollama is up)`);
+      else if (process.stdin.isTTY && process.stdout.isTTY) await reviewInteractive(cfg, [sheet]);
+      else {
+        for (const line of proposalLines(sheet)) out(line);
+        out(dim('  status pending: confirm with refs review'));
+      }
       return 0;
     }
     case 'duplicate':
@@ -138,11 +185,121 @@ async function cmdAdd(args: string[]): Promise<number> {
   }
 }
 
+function proposalLines(sheet: Sheet): string[] {
+  const p = sheet.proposal;
+  if (!p) return [`  no proposal yet ${dim('(Ollama was not available)')}`];
+  if (p.error) return [`  no proposal ${dim(`(${p.error})`)}`];
+  const tags = p.tags.map((t) => (p.newTags.includes(t) ? `${t} ${yellow('(new)')}` : t)).join(', ');
+  return [`  proposed title: ${p.title ?? sheet.title}`, `  proposed tags:  ${tags}`];
+}
+
+/** Walk pending sheets: accept, edit or skip each. Returns how many were accepted. */
+async function reviewInteractive(cfg: Config, sheets: Sheet[]): Promise<number> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let accepted = 0;
+  try {
+    for (const [i, sheet] of sheets.entries()) {
+      out('');
+      out(`${bold(sheet.id)}  "${sheet.title}"  ${dim(`(${sheet.format}${sheet.ocr ? ', OCR' : ''}, ${sheet.file}; ${i + 1} of ${sheets.length})`)}`);
+      for (const line of proposalLines(sheet)) out(line);
+      const usable = !!sheet.proposal?.tags.length;
+      const choices = usable ? '[a]ccept  [e]dit  [s]kip  [q]uit' : '[e]dit  [s]kip  [q]uit';
+      for (;;) {
+        const answer = (await rl.question(`  ${choices} > `)).trim().toLowerCase();
+        if (answer === 'q') return accepted;
+        if (answer === 's' || answer === '') break;
+        let decision: { title?: string; tags?: string[] } | null = null;
+        if (answer === 'a' && usable) decision = {};
+        else if (answer === 'e') {
+          const title = sheet.proposal?.title ?? sheet.title;
+          const tags = sheet.proposal?.tags ?? sheet.tags;
+          const newTitle = (await rl.question(`  title [${title}]: `)).trim();
+          const newTags = parseTagList((await rl.question(`  tags${tags.length ? ` [${tags.join(', ')}]` : ''}: `)).trim());
+          decision = { title: newTitle || title, tags: newTags.length ? newTags : tags };
+          if (!decision.tags!.length) {
+            out(yellow('  a sheet needs at least one tag'));
+            continue;
+          }
+        } else continue;
+        const r = await acceptReview(cfg, sheet.id, decision);
+        accepted++;
+        out(`  ${green('verified')} "${r.sheet.title}" [${r.sheet.tags.join(', ')}]${r.addedToVocab.length ? dim(`; added to tags.json: ${r.addedToVocab.join(', ')}`) : ''}`);
+        if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+        break;
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  return accepted;
+}
+
+async function cmdReview(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { list: { type: 'boolean' }, 'accept-all': { type: 'boolean' }, accept: { type: 'boolean' }, tags: { type: 'string' }, title: { type: 'string' } },
+  });
+  const usage = 'usage: refs review [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]]';
+  if (positionals.length > 1) throw new RefsError(usage);
+  const cfg = config();
+  const pending = pendingSheets(cfg.library);
+
+  if (values.list) {
+    if (!pending.length) out('nothing to review.');
+    for (const s of pending) {
+      out(`${bold(s.id)}  "${s.title}"  ${dim(`(${s.format}${s.ocr ? ', OCR' : ''})`)}`);
+      for (const line of proposalLines(s)) out(line);
+    }
+    return 0;
+  }
+
+  const id = positionals[0];
+  if (id !== undefined) {
+    const tags = parseTagList(values.tags);
+    if (!values.accept && !tags.length) throw new RefsError(`say what to do with ${id}: --accept (take the proposal) or --tags a,b [--title t].\n${usage}`);
+    const r = await acceptReview(cfg, id, { tags: tags.length ? tags : undefined, title: values.title });
+    out(`${green('verified')} ${r.sheet.id} "${r.sheet.title}" [${r.sheet.tags.join(', ')}]`);
+    if (r.addedToVocab.length) out(dim(`added to tags.json: ${r.addedToVocab.join(', ')}`));
+    if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+    return 0;
+  }
+
+  if (values['accept-all']) {
+    let n = 0;
+    for (const s of pending) {
+      if (!s.proposal?.tags.length) {
+        out(`${yellow('skipped')} ${s.id} "${s.title}": no proposal to accept (refs review ${s.id} --tags a,b)`);
+        continue;
+      }
+      const r = await acceptReview(cfg, s.id);
+      out(`${green('verified')} ${r.sheet.id} "${r.sheet.title}" [${r.sheet.tags.join(', ')}]`);
+      if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+      n++;
+    }
+    out(`${plural(n, 'sheet')} accepted, ${pending.length - n} still pending.`);
+    return 0;
+  }
+
+  if (!pending.length) {
+    out('nothing to review.');
+    return 0;
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new RefsError(`refs review is interactive and this is not a terminal. Use --list to see the ${plural(pending.length, 'pending sheet')}, then --accept-all, <id> --accept or <id> --tags a,b.`);
+  }
+  const accepted = await reviewInteractive(cfg, pending);
+  out('');
+  out(`${plural(accepted, 'sheet')} accepted, ${pending.length - accepted} still pending.`);
+  return 0;
+}
+
 async function cmdAllow(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { finding: { type: 'string' } } });
   const n = positiveInt(values.finding, '--finding');
   if (positionals.length !== 1 || n === undefined) throw new RefsError('usage: refs allow <file> --finding <n>');
-  const result = await allowFinding(config().library, positionals[0]!, n);
+  const cfg = config();
+  const result = await allowFinding(cfg.library, positionals[0]!, n, extractOptions(cfg, await connectAi(cfg)));
   const f = result.finding;
   out(`allowed finding ${f.n} (${f.rule}, line ${f.line})${result.sheetId ? ` for ${result.sheetId}` : ''}.`);
   if (!result.sheetId) out('Run refs add again to import the file.');
@@ -151,7 +308,7 @@ async function cmdAllow(args: string[]): Promise<number> {
 
 function formatHit(h: SearchHit): string[] {
   const where = h.heading === h.title || h.heading === 'Intro' ? h.title : `${h.title} > ${h.heading}`;
-  const badges = [h.tags.length ? dim(`[${h.tags.join(', ')}]`) : '', h.status !== 'verified' ? yellow(`[${h.status}]`) : '', h.stale ? yellow('[stale]') : '']
+  const badges = [h.tags.length ? dim(`[${h.tags.join(', ')}]`) : '', h.status !== 'verified' ? yellow(`[${h.status}]`) : '', h.stale ? yellow('[stale]') : '', h.ocr ? dim('[ocr]') : '']
     .filter(Boolean)
     .join(' ');
   return [`${bold(`${h.id}:${h.section}`)}  ${where}${badges ? '  ' + badges : ''}`, `    ${h.snippet}`];
@@ -161,35 +318,39 @@ async function cmdSearch(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { tags: { type: 'string' }, limit: { type: 'string' }, json: { type: 'boolean' } },
+    options: { tags: { type: 'string' }, limit: { type: 'string' }, keyword: { type: 'boolean' }, json: { type: 'boolean' } },
   });
   const query = positionals.join(' ').trim();
-  if (!query) throw new RefsError('usage: refs search <query> [--tags a,b] [--limit n] [--json]');
-  const { library, staleAfterDays } = config();
+  if (!query) throw new RefsError('usage: refs search <query> [--tags a,b] [--limit n] [--keyword] [--json]');
+  const cfg = config();
   if (!fs.existsSync(dataPaths().db)) throw new RefsError('no index yet. Run refs index, or import a sheet with refs add <file>.');
-  const sheets = readManifest(library);
+  const sheets = readManifest(cfg.library);
   const db = openDb();
-  let hits: SearchHit[];
+  let result;
   try {
-    hits = keywordSearch(db, sheets, query, {
+    result = await hybridSearch(db, sheets, query, {
+      client: values.keyword ? null : ollamaClient(cfg.ollama),
+      embedModel: cfg.ollama.embedModel,
+      boostTags: readLastProjectTags(),
+      canonical: tagResolver(readTagVocab(cfg.library)),
       tags: parseTagList(values.tags),
       limit: positiveInt(values.limit, '--limit') ?? 10,
       highlight: values.json ? undefined : useColor ? ['\x1b[1m', '\x1b[22m'] : ['', ''],
-      staleAfterDays,
+      staleAfterDays: cfg.staleAfterDays,
     });
   } finally {
     db.close();
   }
+  if (values.keyword && result.mode === 'keyword') result.notice = '--keyword';
   if (values.json) {
-    out(JSON.stringify(hits, null, 2));
+    out(JSON.stringify(result, null, 2));
     return 0;
   }
-  if (!hits.length) {
-    out(`no matches for "${query}"`);
-    return 0;
-  }
-  for (const h of hits) for (const line of formatHit(h)) out(line);
-  out(dim('\nopen one: refs open <id> --section <n>'));
+  if (result.mode === 'keyword') out(yellow(`keyword only (${result.notice})`));
+  if (!result.hits.length) out(`no matches for "${query}"`);
+  for (const h of result.hits) for (const line of formatHit(h)) out(line);
+  const boost = result.boostTags.length ? `, boosted for ${result.boostTags.join(', ')}` : '';
+  out(dim(`\n${result.mode === 'hybrid' ? 'hybrid' : 'keyword only'}, ${result.tookMs} ms${boost}${result.hits.length ? '. open one: refs open <id> --section <n>' : ''}`));
   return 0;
 }
 
@@ -251,6 +412,25 @@ function printIndexReport(r: IndexReport): void {
     warn(`${b.id} was edited and now has a likely secret (line ${f.line}, ${f.rule}); it is out of the index until you redact it or run refs allow "${b.file}" --finding ${f.n}`);
   }
   for (const u of s.unreadable) warn(`${u.id} was edited but could not be read: ${u.message}`);
+  for (const d of s.deferred) warn(`${d.id} was edited and needs OCR; the old version stays indexed until Ollama is up (${d.message})`);
+  if (!r.ai.up) warn(`Ollama is not available (${r.ai.reason}): keyword index only; tagging, OCR and embeddings wait for the next refs index`);
+  const ib = r.inbox;
+  for (const i of ib.imported) {
+    for (const w of i.warnings) warn(`${path.basename(i.file)}: ${w}`);
+    const tagNote = i.sheet.proposal?.tags.length ? `proposed tags: ${i.sheet.proposal.tags.join(', ')}` : i.queued ? 'tags wait for Ollama' : 'no tag proposal';
+    out(`inbox: imported ${path.basename(i.file)} as ${bold(i.sheet.id)} "${i.sheet.title}"${i.sheet.ocr ? ' (OCR)' : ''}, pending (${tagNote})`);
+  }
+  for (const b of ib.blocked) warn(`inbox: ${path.basename(b.file)} moved to ${path.relative(path.dirname(path.dirname(b.dest)), b.dest)}; see ${path.basename(b.dest)}.reason.txt`);
+  for (const d of ib.duplicates) out(`inbox: ${path.basename(d.file)} is the same as ${d.existing}; moved to _duplicates`);
+  for (const w of ib.waiting) out(dim(`inbox: ${path.basename(w.file)} left in the inbox for now: ${w.reason}`));
+  if (r.retag?.proposed.length) out(`proposed tags for ${r.retag.proposed.join(', ')}`);
+  const pending = ib.imported.length + (r.retag?.proposed.length ?? 0);
+  if (pending) out(dim('confirm proposed tags with refs review'));
+  if (r.embed) {
+    if (r.embed.modelChanged) out('embedding model changed: re-embedding every section');
+    if (r.embed.skipped) warn(`embeddings incomplete (${r.embed.remaining} sections left): ${r.embed.skipped}`);
+    else if (r.embed.embedded) out(`embedded ${plural(r.embed.embedded, 'section')}`);
+  }
   if (s.missing.length) warn(`missing from the library: ${s.missing.join(', ')}. They stay in manifest.json; see refs doctor.`);
   if (s.unknown.length) warn(`not in manifest.json: ${s.unknown.join(', ')}`);
   for (const w of r.warnings) warn(w);
@@ -412,8 +592,8 @@ async function cmdInstall(args: string[]): Promise<number> {
   return 0;
 }
 
-function cmdDoctor(): number {
-  const checks = runDoctor();
+async function cmdDoctor(): Promise<number> {
+  const checks = await runDoctor();
   const label = { ok: green('ok  '), warn: yellow('warn'), fail: red('fail') };
   for (const c of checks) out(`${label[c.status]}  ${c.name.padEnd(8)} ${c.detail}`);
   const fails = checks.filter((c) => c.status === 'fail').length;
@@ -431,6 +611,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdAllow(args);
     case 'search':
       return cmdSearch(args);
+    case 'review':
+      return cmdReview(args);
     case 'open':
       return cmdOpen(args);
     case 'index':

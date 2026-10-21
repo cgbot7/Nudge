@@ -128,6 +128,16 @@ export function readHookCache(): HookCache | null {
   }
 }
 
+/** Tags of the project the prompt hook last saw you enter (last-project.json); [] when unknown. */
+export function readLastProjectTags(): string[] {
+  try {
+    const last = JSON.parse(decodeText(fs.readFileSync(dataPaths().lastProject))) as { tags?: unknown };
+    return Array.isArray(last.tags) ? last.tags.filter((t): t is string => typeof t === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export function newHookCache(roots: string[], projects: ProjectEntry[], now = new Date()): HookCache {
   return { version: 1, generatedAt: now.toISOString(), roots: roots.map(pathKey), projects };
 }

@@ -1,16 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { connectAi } from './ai.ts';
 import { chunkExtracted } from './chunk.ts';
 import type { Config } from './config.ts';
 import { indexSheet, indexedState, openDb, removeSheet, sheetMeta, type DB } from './db.ts';
 import { discoverProjects, resolveProjectRoot, rootFor } from './detect.ts';
+import { embedIndex, type EmbedReport } from './embed.ts';
+import { OcrUnavailableError } from './extract/image.ts';
+import type { ExtractOptions } from './extract/index.ts';
 import { ignoredFor } from './gaps.ts';
+import { commitPaths } from './git.ts';
 import { buildEntry, matchSheets, newHookCache, readHookCache, statsContext, writeHookCache, type ProjectEntry, type StatsContext } from './hookcache.ts';
-import { ensureLibrary, extractCached, sheetAbsPath, syncLibrary, type SyncReport } from './library.ts';
+import { processInbox, type InboxReport } from './inbox.ts';
+import { ensureLibrary, extractCached, sheetAbsPath, syncLibrary, writeExtractCache, writeLibraryOcr, type SyncReport } from './library.ts';
 import { LockBusyError, acquireLock, withLock } from './lock.ts';
 import { isStale, readManifest, type Sheet } from './manifest.ts';
 import { dataPaths, normPath, pathKey } from './paths.ts';
+import { retagQueued, type RetagReport } from './review.ts';
 import { detectTags, readRules, type Rule } from './rules.ts';
+import { blockingFindings, scanSecrets } from './secrets.ts';
 import { unusedSheets } from './usage.ts';
 import { RefsError, errorMessage, sha256 } from './util.ts';
 
@@ -19,6 +27,12 @@ export interface IndexReport {
   notes: string[];
   warnings: string[];
   sync: SyncReport;
+  inbox: InboxReport;
+  /** Ollama status for this run. */
+  ai: { up: boolean; reason?: string };
+  /** Proposals made for sheets queued while Ollama was down. */
+  retag: RetagReport | null;
+  embed: EmbedReport | null;
   sheets: number;
   /** Sheets (re-)indexed this run. */
   indexed: number;
@@ -33,13 +47,22 @@ function deleteIndexDb(): void {
   for (const f of [db, `${db}-wal`, `${db}-shm`]) fs.rmSync(f, { force: true });
 }
 
+interface IndexLibraryOptions {
+  /** Ignore the extract cache (refs index --rebuild). */
+  fresh: boolean;
+  /** Leave out of this run but keep whatever the index already has for them. */
+  keep: Set<string>;
+  extract: ExtractOptions;
+}
+
 /** Index every sheet whose content, title or tags changed; drop the rest from the index. */
-async function indexLibrary(db: DB, library: string, sheets: Sheet[], skip: Set<string>, fresh: boolean, warnings: string[]) {
+async function indexLibrary(db: DB, library: string, sheets: Sheet[], skip: Set<string>, opts: IndexLibraryOptions, warnings: string[]) {
   const state = indexedState(db);
-  const present = new Set<string>();
+  const present = new Set<string>([...opts.keep].filter((id) => state.has(id)));
+  const ocrStored: string[] = [];
   let indexed = 0;
   for (const sheet of sheets) {
-    if (skip.has(sheet.id)) continue;
+    if (skip.has(sheet.id) || opts.keep.has(sheet.id)) continue;
     let buf: Buffer;
     try {
       buf = fs.readFileSync(sheetAbsPath(library, sheet));
@@ -50,17 +73,27 @@ async function indexLibrary(db: DB, library: string, sheets: Sheet[], skip: Set<
     // Changed again since the sync step; the next run picks it up.
     if (sha !== sheet.sha256) continue;
     const prev = state.get(sheet.id);
-    if (!fresh && prev && prev.sha256 === sha && prev.meta === sheetMeta(sheet)) {
+    if (!opts.fresh && prev && prev.sha256 === sha && prev.meta === sheetMeta(sheet)) {
       present.add(sheet.id);
       continue;
     }
     try {
-      const { text } = await extractCached(sheet.format, buf, sha, fresh);
-      indexSheet(db, sheet, chunkExtracted(sheet.format, text));
+      const result = await extractCached(sheet.format, buf, sha, opts.fresh, { library, extract: opts.extract });
+      if (result.ocr) {
+        // The stored OCR text was missing, so OCR ran again: scan it before it goes anywhere.
+        if (blockingFindings(scanSecrets(result.text, sheet.secretAllowlist)).length) {
+          warnings.push(`${sheet.id}: new OCR text has a likely secret; left out of the index until you redact the image`);
+          continue;
+        }
+        writeExtractCache(sha, result.text);
+        ocrStored.push(writeLibraryOcr(library, sha, result.text));
+      }
+      indexSheet(db, sheet, chunkExtracted(sheet.format, result.text));
       present.add(sheet.id);
       indexed++;
     } catch (e) {
-      warnings.push(`${sheet.id}: could not index (${errorMessage(e)})`);
+      if (e instanceof OcrUnavailableError && prev) present.add(sheet.id);
+      else warnings.push(`${sheet.id}: could not index (${errorMessage(e)})`);
     }
   }
   let removed = 0;
@@ -68,6 +101,10 @@ async function indexLibrary(db: DB, library: string, sheets: Sheet[], skip: Set<
     if (present.has(id)) continue;
     removeSheet(db, id);
     removed++;
+  }
+  if (ocrStored.length) {
+    const commit = commitPaths(library, ocrStored, `refs: store OCR text for ${ocrStored.length} sheet${ocrStored.length === 1 ? '' : 's'}`);
+    if (!commit.ok) warnings.push(`OCR text stored, but the Git commit failed: ${commit.stderr || 'unknown error'}`);
   }
   return { indexed, removed };
 }
@@ -102,16 +139,30 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
     const { library } = config;
     const notes = ensureLibrary(library);
     const warnings: string[] = [];
-    const sheets = readManifest(library);
-    const sync = await syncLibrary(library, sheets);
-    if (sync.commitError) warnings.push(`library synced, but the Git commit failed: ${sync.commitError}`);
+    const ai = await connectAi(config);
+    const extract: ExtractOptions = { ocr: ai.ocr, ocrMaxPages: config.ocrMaxPages };
 
+    const sync = await syncLibrary(library, readManifest(library), { extract });
+    if (sync.commitError) warnings.push(`library synced, but the Git commit failed: ${sync.commitError}`);
     if (opts.rebuild) deleteIndexDb();
+
+    const inbox = await processInbox(library, { extract, propose: ai.propose });
+    let retag: RetagReport | null = null;
+    if (ai.propose) {
+      retag = await retagQueued(library, ai.propose);
+      warnings.push(...retag.warnings);
+      if (retag.commitError) warnings.push(`tag proposals saved, but the Git commit failed: ${retag.commitError}`);
+    }
+
+    const sheets = readManifest(library);
     const skip = new Set([...sync.missing, ...sync.blocked.map((b) => b.id), ...sync.unreadable.map((u) => u.id)]);
+    const keep = new Set(sync.deferred.map((d) => d.id));
     const db = openDb();
     let counts;
+    let embed: EmbedReport | null = null;
     try {
-      counts = await indexLibrary(db, library, sheets, skip, !!opts.rebuild, warnings);
+      counts = await indexLibrary(db, library, sheets, skip, { fresh: !!opts.rebuild, keep, extract }, warnings);
+      if (ai.up && config.ollama.embedModel) embed = await embedIndex(db, ai.client, config.ollama.embedModel);
     } finally {
       db.close();
     }
@@ -120,7 +171,19 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
     const ctx = statsContext(config);
     const projects = scanAllProjects(config, rules, ctx);
     writeHookCache(newHookCache(config.roots, projects, ctx.now));
-    return { rebuilt: !!opts.rebuild, notes, warnings, sync, sheets: sheets.length, ...counts, projects };
+    return {
+      rebuilt: !!opts.rebuild,
+      notes,
+      warnings,
+      sync,
+      inbox,
+      ai: { up: ai.up, reason: ai.downReason },
+      retag,
+      embed,
+      sheets: sheets.length,
+      ...counts,
+      projects,
+    };
   } finally {
     lock.release();
   }

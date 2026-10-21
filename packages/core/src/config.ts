@@ -7,8 +7,14 @@ import { RefsError, decodeText, errorMessage, writeFileAtomic } from './util.ts'
 const OllamaSchema = z.object({
   host: z.url().default('http://localhost:11434'),
   embedModel: z.string().default('bge-m3'),
-  chatModel: z.string().default('qwen'),
-  visionModel: z.string().default(''),
+  chatModel: z.string().default('mistral-small3.2:24b'),
+  visionModel: z.string().default('mistral-small3.2:24b'),
+  /** Chat endpoint when it is not the Ollama host (a relay); defaults to host. */
+  chatHost: z.url().optional(),
+  /** "openai" talks to an OpenAI-compatible /v1/chat/completions endpoint. */
+  chatApi: z.enum(['ollama', 'openai']).default('ollama'),
+  /** Name of the environment variable holding the chat endpoint's bearer token. Never the token itself. */
+  chatApiKeyEnv: z.string().optional(),
 });
 
 export const ConfigSchema = z.object({

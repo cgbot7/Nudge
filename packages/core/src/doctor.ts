@@ -1,14 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig, type Config } from './config.ts';
-import { indexedSheets, openDb, sectionCount } from './db.ts';
+import { embeddingCoverage, embeddingModels, indexedSheets, openDb, sectionCount } from './db.ts';
 import { readGapIgnores } from './gaps.ts';
 import { gitAvailable, isRepoRoot } from './git.ts';
 import { readHookCache } from './hookcache.ts';
+import { inboxCounts } from './inbox.ts';
 import { installStatus, realSystem, taskName, type SystemOps } from './install.ts';
 import { sheetAbsPath } from './library.ts';
 import { lockStatus } from './lock.ts';
 import { readManifest, type Sheet } from './manifest.ts';
+import { hasModel, ollamaClient } from './ollama.ts';
 import { dataPaths, pathKey } from './paths.ts';
 import { readRules, readTagVocab, rulesPath } from './rules.ts';
 import { errorMessage, sha256File } from './util.ts';
@@ -25,7 +27,7 @@ function list(ids: string[], max = 8): string {
   return ids.length > max ? `${ids.slice(0, max).join(', ')} and ${ids.length - max} more` : ids.join(', ');
 }
 
-export function runDoctor(sys: SystemOps = realSystem()): Check[] {
+export async function runDoctor(sys: SystemOps = realSystem()): Promise<Check[]> {
   const checks: Check[] = [];
   const add: Add = (status, name, detail) => checks.push({ status, name, detail });
 
@@ -51,7 +53,73 @@ export function runDoctor(sys: SystemOps = realSystem()): Check[] {
   else add('warn', 'lock', `held by process ${lock.info?.pid ?? '?'} (${lock.info?.command ?? 'unknown'}) since ${lock.info?.at ?? '?'}`);
 
   hookChecks(config, add, sys);
+  await ollamaChecks(config, add);
+  aiLibraryChecks(config, add);
   return checks;
+}
+
+async function ollamaChecks(config: Config, add: Add): Promise<void> {
+  const { host, embedModel, chatModel, visionModel, chatApi, chatHost } = config.ollama;
+  const client = ollamaClient(config.ollama);
+  const health = await client.health();
+  if (!health.ok) {
+    add('warn', 'ollama', `${health.reason}. Search falls back to keyword only; tagging and OCR wait for a later refs index`);
+    return;
+  }
+  add('ok', 'ollama', `version ${health.version} at ${host}`);
+  let installed: string[];
+  try {
+    installed = await client.models();
+  } catch (e) {
+    add('warn', 'models', `could not list models: ${errorMessage(e)}`);
+    return;
+  }
+  const viaRelay = chatApi === 'openai' || (chatHost !== undefined && chatHost !== host);
+  const wanted: [string, string][] = [
+    ['embed', embedModel],
+    ...(viaRelay ? [] : ([['chat', chatModel]] as [string, string][])),
+    ['vision', visionModel],
+  ];
+  for (const [role, model] of wanted) {
+    if (!model) add('warn', 'models', `${role}Model is not set in config.json`);
+    else if (hasModel(installed, model)) add('ok', 'models', `${role}: ${model}`);
+    else add('fail', 'models', `${role}: ${model} is not pulled. Run: ollama pull ${model}`);
+  }
+  if (viaRelay) add('ok', 'models', `chat: ${chatModel} through ${chatHost ?? host} (${chatApi} API, not checked)`);
+}
+
+function aiLibraryChecks(config: Config, add: Add): void {
+  const { library } = config;
+  if (!fs.existsSync(library)) return;
+  const counts = inboxCounts(library);
+  const inboxDetail = `${counts.waiting} waiting, ${counts.blocked} blocked, ${counts.duplicates} duplicates`;
+  add(counts.blocked ? 'warn' : 'ok', 'inbox', counts.blocked ? `${inboxDetail}; see the reason files in inbox\_blocked` : inboxDetail);
+  try {
+    const pending = readManifest(library).filter((s) => s.status === 'pending');
+    if (pending.length) add('warn', 'review', `${pending.length} pending sheet${pending.length === 1 ? '' : 's'} waiting for refs review`);
+    else add('ok', 'review', 'nothing waiting');
+  } catch {
+    // The manifest check above already failed.
+  }
+
+  const dbFile = dataPaths().db;
+  if (!fs.existsSync(dbFile)) return;
+  try {
+    const db = openDb(dbFile);
+    try {
+      const model = config.ollama.embedModel;
+      const { sections, embedded } = embeddingCoverage(db, model);
+      const others = embeddingModels(db).filter((m) => m !== model);
+      if (others.length) add('warn', 'vectors', `vectors from ${others.join(', ')} are replaced by ${model} on the next refs index`);
+      if (!sections) add('ok', 'vectors', 'no sections yet');
+      else if (embedded === sections) add('ok', 'vectors', `${embedded} of ${sections} sections embedded with ${model}`);
+      else add('warn', 'vectors', `${embedded} of ${sections} sections embedded with ${model}; refs index embeds the rest (needs Ollama)`);
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    add('fail', 'vectors', `${dbFile}: ${errorMessage(e)}`);
+  }
 }
 
 function libraryChecks(library: string, add: Add): void {

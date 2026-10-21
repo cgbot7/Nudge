@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chunkExtracted, firstH1 } from './chunk.ts';
 import { openDb, indexSheet } from './db.ts';
-import { extract, formatFromPath } from './extract/index.ts';
+import { extract, formatFromPath, type ExtractOptions } from './extract/index.ts';
 import { commitPaths, trackingRepo } from './git.ts';
-import { ensureLibrary, writeExtractCache } from './library.ts';
+import { ensureLibrary, inboxDir, writeExtractCache, writeLibraryOcr } from './library.ts';
+import type { ProposeFn } from './llm.ts';
 import { withLock } from './lock.ts';
-import { findBySha, nextId, readManifest, writeManifest, type AllowEntry, type Sheet, type SheetFormat } from './manifest.ts';
+import { findBySha, nextId, readManifest, writeManifest, type AllowEntry, type Proposal, type Sheet, type SheetFormat } from './manifest.ts';
 import { dataPaths, isInside, normPath, pathKey } from './paths.ts';
 import { blockingFindings, scanSecrets, type Finding } from './secrets.ts';
 import {
@@ -30,6 +31,12 @@ export interface AddOptions {
   yes?: boolean;
   /** Ask the user a yes/no question. Without it, anything needing confirmation fails unless `yes`. */
   confirm?: (question: string) => Promise<boolean>;
+  /** OCR, page limit and partial-OCR question for images and scanned PDFs. */
+  extract?: ExtractOptions;
+  /** LLM title and tag proposal for imports without --tags. Without it the sheet waits in the queue. */
+  propose?: ProposeFn | null;
+  /** The file sits in the library's inbox (which is inside the library folder). */
+  fromInbox?: boolean;
   /** Injectable for tests. */
   fsOps?: FsOps;
 }
@@ -40,12 +47,19 @@ export interface FsOps {
 }
 
 export type AddResult =
-  | { kind: 'added'; sheet: Sheet; sections: number; notes: string[]; warnings: string[] }
+  | { kind: 'added'; sheet: Sheet; sections: number; notes: string[]; warnings: string[]; queued?: string }
   | { kind: 'duplicate'; existing: Sheet }
   | { kind: 'blocked'; file: string; format: SheetFormat; findings: Finding[] };
 
-/** Import pipeline: hash, extract, scan, move, record, index, commit. */
-export async function addFile(library: string, file: string, opts: AddOptions = {}): Promise<AddResult> {
+interface Prepared {
+  abs: string;
+  base: string;
+  format: SheetFormat;
+  warnings: string[];
+}
+
+/** Checks that need no lock: the file exists, is supported and is not already a sheet. */
+function prepare(library: string, file: string, opts: AddOptions): Prepared {
   const abs = path.resolve(file);
   const base = path.basename(abs);
   if (/^~\$/.test(base)) throw new RefsError(`${base} is an Office lock file; ignored.`);
@@ -56,94 +70,119 @@ export async function addFile(library: string, file: string, opts: AddOptions = 
     throw new RefsError(`file not found: ${abs}`);
   }
   if (!stat.isFile()) throw new RefsError(`not a file: ${abs}`);
-  if (isInside(abs, library)) throw new RefsError(`${abs} is already inside the library.`);
+  if (isInside(abs, library) && !(opts.fromInbox && isInside(abs, inboxDir(library)))) throw new RefsError(`${abs} is already inside the library.`);
   const format = formatFromPath(abs);
-  if (!format) throw new RefsError(`unsupported file type "${path.extname(abs)}". Supported: .md, .markdown, .txt, .docx, .pdf`);
+  if (!format) throw new RefsError(`unsupported file type "${path.extname(abs)}". Supported: .md, .markdown, .txt, .docx, .pdf, .png, .jpg, .jpeg`);
 
   const warnings: string[] = [];
   if (stat.size > LARGE_FILE_BYTES) {
     warnings.push(`large file (${(stat.size / 1024 / 1024).toFixed(1)} MB): Git history grows with every version of it.`);
   }
+  return { abs, base, format, warnings };
+}
 
-  return withLock('add', async () => {
-    const notes = ensureLibrary(library);
-    const sheets = readManifest(library);
-    const buf = fs.readFileSync(abs);
-    const sha = sha256(buf);
-    const existing = findBySha(sheets, sha);
-    if (existing) return { kind: 'duplicate', existing };
+/** Import pipeline: hash, extract (OCR), scan, propose tags, move, record, index, commit. */
+export async function addFile(library: string, file: string, opts: AddOptions = {}): Promise<AddResult> {
+  const prepared = prepare(library, file, opts);
+  return withLock('add', () => importPrepared(library, prepared, opts));
+}
 
-    const extracted = await extract(format, buf);
-    warnings.push(...extracted.warnings);
+/** addFile for a caller that already holds the refs.lock (refs index processing the inbox). */
+export async function importLocked(library: string, file: string, opts: AddOptions = {}): Promise<AddResult> {
+  return importPrepared(library, prepare(library, file, opts), opts);
+}
 
-    const allowlist = pendingAllowFor(abs);
-    const findings = scanSecrets(extracted.text, allowlist);
-    if (blockingFindings(findings).length) return { kind: 'blocked', file: abs, format, findings };
-    writeExtractCache(sha, extracted.text);
+async function importPrepared(library: string, { abs, base, format, warnings }: Prepared, opts: AddOptions): Promise<AddResult> {
+  const notes = ensureLibrary(library);
+  const sheets = readManifest(library);
+  const buf = fs.readFileSync(abs);
+  const sha = sha256(buf);
+  const existing = findBySha(sheets, sha);
+  if (existing) return { kind: 'duplicate', existing };
 
-    const sections = chunkExtracted(format, extracted.text);
-    if (!sections.length) throw new RefsError(`no text found in ${base}; nothing to index.`);
+  const extracted = await extract(format, buf, opts.extract);
+  warnings.push(...extracted.warnings);
 
-    const repo = trackingRepo(abs);
-    if (repo && !opts.yes) {
-      const question = `${base} is tracked by the Git repo at ${repo}; moving it shows as a deletion there. Move it anyway?`;
-      if (!opts.confirm) throw new RefsError(`${question.replace(' Move it anyway?', '')} Re-run with --yes to move it.`);
-      if (!(await opts.confirm(question))) throw new RefsError('cancelled; nothing changed.');
-    }
-    assertNotLocked(abs);
+  // OCR text is scanned like any other text before anything is moved or cached.
+  const allowlist = pendingAllowFor(abs);
+  const findings = scanSecrets(extracted.text, allowlist);
+  if (blockingFindings(findings).length) return { kind: 'blocked', file: abs, format, findings };
 
-    const id = nextId(sheets);
-    const title = (format === 'md' || format === 'docx' ? firstH1(extracted.text) : null) ?? titleFromFilename(abs);
-    const ext = format === 'jpg' ? '.jpg' : `.${format}`;
-    const rel = `sheets/${id}-${slugify(title)}${ext}`;
-    const dest = path.join(library, ...rel.split('/'));
+  const sections = chunkExtracted(format, extracted.text);
+  if (!sections.length) throw new RefsError(`no text found in ${base}; nothing to index.`);
 
-    const moved = moveFile(abs, dest, sha, opts.fsOps);
-    if (moved.keptOriginal) warnings.push(`copied into the library, but the original could not be deleted (${moved.reason}). Both copies exist now; delete ${abs} yourself.`);
-    if (repo) warnings.push(`the move shows as a deletion in ${repo}; commit it there when ready.`);
+  const repo = trackingRepo(abs);
+  if (repo && !opts.yes) {
+    const question = `${base} is tracked by the Git repo at ${repo}; moving it shows as a deletion there. Move it anyway?`;
+    if (!opts.confirm) throw new RefsError(`${question.replace(' Move it anyway?', '')} Re-run with --yes to move it.`);
+    if (!(await opts.confirm(question))) throw new RefsError('cancelled; nothing changed.');
+  }
+  assertNotLocked(abs);
 
-    const tags = [...new Set((opts.tags ?? []).map(normalizeTag).filter(Boolean))];
-    const date = today();
-    const usedAllow = allowlist.filter((a) => findings.some((f) => f.fingerprint === a.fingerprint));
-    const sheet: Sheet = {
-      id,
-      title,
-      file: rel,
-      originalPath: normPath(abs),
-      sha256: sha,
-      format,
-      tags,
-      status: tags.length ? 'verified' : 'pending',
-      source: 'imported',
-      learned: false,
-      lastVerified: date,
-      updatedAt: date,
-      secretAllowlist: usedAllow,
-    };
+  const tags = [...new Set((opts.tags ?? []).map(normalizeTag).filter(Boolean))];
+  let proposal: Proposal | undefined;
+  let queued: string | undefined;
+  if (!tags.length) {
+    const outcome = opts.propose ? await opts.propose({ filename: base, text: extracted.text }) : { kind: 'queued' as const, reason: 'Ollama is not available' };
+    if (outcome.kind === 'proposal') proposal = outcome.proposal;
+    else queued = outcome.reason;
+  }
+
+  writeExtractCache(sha, extracted.text);
+  const id = nextId(sheets);
+  const title = (format === 'md' || format === 'docx' ? firstH1(extracted.text) : null) ?? titleFromFilename(abs);
+  const ext = format === 'jpg' ? '.jpg' : `.${format}`;
+  const rel = `sheets/${id}-${slugify(title)}${ext}`;
+  const dest = path.join(library, ...rel.split('/'));
+
+  const moved = moveFile(abs, dest, sha, opts.fsOps);
+  if (moved.keptOriginal) warnings.push(`copied into the library, but the original could not be deleted (${moved.reason}). Both copies exist now; delete ${abs} yourself.`);
+  if (repo) warnings.push(`the move shows as a deletion in ${repo}; commit it there when ready.`);
+
+  const date = today();
+  const usedAllow = allowlist.filter((a) => findings.some((f) => f.fingerprint === a.fingerprint));
+  const sheet: Sheet = {
+    id,
+    title,
+    file: rel,
+    originalPath: normPath(abs),
+    sha256: sha,
+    format,
+    tags,
+    status: tags.length ? 'verified' : 'pending',
+    source: 'imported',
+    learned: false,
+    lastVerified: date,
+    updatedAt: date,
+    secretAllowlist: usedAllow,
+    ...(proposal ? { proposal } : {}),
+    ...(extracted.ocr ? { ocr: { ...extracted.ocr, at: date } } : {}),
+  };
+  const ocrRel = extracted.ocr ? writeLibraryOcr(library, sha, extracted.text) : null;
+  try {
+    writeManifest(library, [...sheets, sheet]);
+  } catch (e) {
+    if (!moved.keptOriginal) restoreMove(dest, abs);
+    if (ocrRel) fs.rmSync(path.join(library, ...ocrRel.split('/')), { force: true });
+    throw new RefsError(`could not write manifest.json (${errorMessage(e)}); the file was put back.`);
+  }
+  clearPendingAllow(abs);
+
+  try {
+    const db = openDb();
     try {
-      writeManifest(library, [...sheets, sheet]);
-    } catch (e) {
-      if (!moved.keptOriginal) restoreMove(dest, abs);
-      throw new RefsError(`could not write manifest.json (${errorMessage(e)}); the file was put back.`);
+      indexSheet(db, sheet, sections);
+    } finally {
+      db.close();
     }
-    clearPendingAllow(abs);
+  } catch (e) {
+    warnings.push(`imported, but indexing failed: ${errorMessage(e)}`);
+  }
 
-    try {
-      const db = openDb();
-      try {
-        indexSheet(db, sheet, sections);
-      } finally {
-        db.close();
-      }
-    } catch (e) {
-      warnings.push(`imported, but indexing failed: ${errorMessage(e)}`);
-    }
+  const commit = commitPaths(library, ['manifest.json', rel, ...(ocrRel ? [ocrRel] : [])], `refs: add ${id} ${title}`);
+  if (!commit.ok) warnings.push(`imported, but the Git commit failed: ${commit.stderr || 'unknown error'}`);
 
-    const commit = commitPaths(library, ['manifest.json', rel], `refs: add ${id} ${title}`);
-    if (!commit.ok) warnings.push(`imported, but the Git commit failed: ${commit.stderr || 'unknown error'}`);
-
-    return { kind: 'added', sheet, sections: sections.length, notes, warnings };
-  });
+  return { kind: 'added', sheet, sections: sections.length, notes, warnings, queued };
 }
 
 /** Word and other editors hold files open; opening for write fails on a locked file. */
@@ -235,12 +274,12 @@ export interface AllowResult {
 }
 
 /** Allowlist finding `n` (as numbered by the scan) for a file, storing only its fingerprint. */
-export async function allowFinding(library: string, file: string, n: number): Promise<AllowResult> {
+export async function allowFinding(library: string, file: string, n: number, extractOpts: ExtractOptions = {}): Promise<AllowResult> {
   const abs = path.resolve(file);
   if (!fs.existsSync(abs)) throw new RefsError(`file not found: ${abs}`);
   const format = formatFromPath(abs);
   if (!format) throw new RefsError(`unsupported file type "${path.extname(abs)}".`);
-  const { text } = await extract(format, fs.readFileSync(abs));
+  const { text } = await extract(format, fs.readFileSync(abs), extractOpts);
   const findings = scanSecrets(text);
   const finding = findings.find((f) => f.n === n);
   if (!finding) {

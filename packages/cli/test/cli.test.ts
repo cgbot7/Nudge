@@ -29,10 +29,15 @@ test('end to end: doctor, add, search, open, blocked add, allow', () => {
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /^s_0001:2 {2}Docker basics > Containers {2}\[docker\]/m);
 
+  assert.match(r.stdout, /^keyword only \(no embeddings from fake-embed yet; run refs index\)$/m);
+  assert.match(r.stdout, /keyword only, \d+ ms/);
+
   r = refs('search', 'prune', '--json');
-  const hits = JSON.parse(r.stdout) as { id: string; section: number }[];
-  assert.ok(hits.length >= 2);
-  assert.equal(hits[0]?.id, 's_0001');
+  const result = JSON.parse(r.stdout) as { mode: string; notice: string; hits: { id: string; section: number }[] };
+  assert.equal(result.mode, 'keyword');
+  assert.match(result.notice, /no embeddings/);
+  assert.ok(result.hits.length >= 2);
+  assert.equal(result.hits[0]?.id, 's_0001');
 
   r = refs('open', 's_0001', '--section', '4');
   assert.equal(r.code, 0, r.stderr);
@@ -62,7 +67,8 @@ test('end to end: doctor, add, search, open, blocked add, allow', () => {
 
 test('usage errors and later-milestone commands exit non-zero with a message', () => {
   assert.match(refs('frobnicate').stderr, /unknown command/);
-  assert.match(refs('review').stderr, /milestone 3/);
+  assert.match(refs('suggest').stderr, /milestone 4/);
+  assert.match(refs('review', 's_0001').stderr, /--accept/);
   assert.match(refs('search', '--bogus').stderr, /Unknown option/);
   assert.match(refs('open', 's_0001', '--section', 'two').stderr, /positive whole number/);
   assert.equal(refs('open', 's_9999').code, 1);

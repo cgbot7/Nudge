@@ -5,7 +5,7 @@ import path from 'node:path';
 import { before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { acquireLock } from '../../core/src/lock.ts';
-import { DOCKER_MD, setupEnv, write } from '../../core/test/helpers.ts';
+import { DEAD_OLLAMA, DOCKER_MD, setupEnv, write } from '../../core/test/helpers.ts';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const HOOK = fileURLToPath(new URL('../../../shell/refs-hook.ps1', import.meta.url));
@@ -36,7 +36,7 @@ before(() => {
   fs.mkdirSync(path.join(app, 'src', 'lib'), { recursive: true });
   fs.writeFileSync(
     path.join(t.env.APPDATA!, 'refs', 'config.json'),
-    JSON.stringify({ library: t.library.replace(/\\/g, '/'), roots: [root.replace(/\\/g, '/')] }),
+    JSON.stringify({ library: t.library.replace(/\\/g, '/'), roots: [root.replace(/\\/g, '/')], ollama: { host: DEAD_OLLAMA } }),
   );
   assert.equal(refs(['add', write(t.work, 'docker-notes.md', DOCKER_MD), '--tags', 'docker']).code, 0);
   assert.equal(refs(['add', write(t.work, 'node.md', '# Node "npm" tips\n\nRun package scripts with npm run and check versions with node --version.\n'), '--tags', 'node']).code, 0);
