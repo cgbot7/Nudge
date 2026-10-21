@@ -37,6 +37,15 @@ export const OcrInfoSchema = z.object({
 });
 export type OcrInfo = z.infer<typeof OcrInfoSchema>;
 
+/** How an LLM draft was made (source llm). Kept after refs approve as provenance. */
+export const LlmInfoSchema = z.object({
+  model: z.string(),
+  at: isoDate,
+  /** Project the suggestion was made for. */
+  project: z.string().optional(),
+});
+export type LlmInfo = z.infer<typeof LlmInfoSchema>;
+
 // Loose so fields added by hand or by later milestones survive a rewrite.
 export const SheetSchema = z.looseObject({
   id: z.string().regex(/^s_\d{4,}$/, 'expected s_0000'),
@@ -54,6 +63,7 @@ export const SheetSchema = z.looseObject({
   secretAllowlist: z.array(AllowEntrySchema).default([]),
   proposal: ProposalSchema.optional(),
   ocr: OcrInfoSchema.optional(),
+  llm: LlmInfoSchema.optional(),
 });
 export type Sheet = z.infer<typeof SheetSchema>;
 

@@ -6,7 +6,9 @@ import { readGapIgnores } from './gaps.ts';
 import { gitAvailable, isRepoRoot } from './git.ts';
 import { readHookCache } from './hookcache.ts';
 import { inboxCounts } from './inbox.ts';
-import { installStatus, realSystem, taskName, type SystemOps } from './install.ts';
+import { agentPaths, agentStatus } from './agents.ts';
+import { agentTargets, installStatus, realSystem, taskName, type SystemOps } from './install.ts';
+import { probeMcpServer } from './mcpprobe.ts';
 import { sheetAbsPath } from './library.ts';
 import { lockStatus } from './lock.ts';
 import { readManifest, type Sheet } from './manifest.ts';
@@ -55,7 +57,41 @@ export async function runDoctor(sys: SystemOps = realSystem()): Promise<Check[]>
   hookChecks(config, add, sys);
   await ollamaChecks(config, add);
   aiLibraryChecks(config, add);
+  await agentChecks(add, sys);
   return checks;
+}
+
+export const MCP_TOOLS = ['refs_search', 'refs_get', 'refs_for_project'];
+
+async function agentChecks(add: Add, sys: SystemOps): Promise<void> {
+  const t = agentTargets();
+  const probe = await probeMcpServer(t.node, [t.server]);
+  const missingTools = MCP_TOOLS.filter((n) => !probe.tools.includes(n));
+  if (!probe.ok) add('fail', 'mcp', `the MCP server did not start: ${probe.error}`);
+  else if (missingTools.length) add('fail', 'mcp', `the MCP server is missing ${missingTools.join(', ')} (lists ${probe.tools.join(', ') || 'nothing'})`);
+  else add('ok', 'mcp', `server starts in ${probe.ms} ms and lists ${probe.tools.join(', ')} (protocol ${probe.protocol ?? '?'})`);
+
+  const paths = agentPaths();
+  const status = agentStatus(t);
+  let claude: string | null = null;
+  try {
+    claude = sys.findClaude();
+  } catch {
+    // Treated as not installed.
+  }
+  if (!claude && !fs.existsSync(paths.claudeDir)) add('ok', 'claude', 'Claude Code not found; skipped');
+  else {
+    add(status.claudeHook ? 'ok' : 'warn', 'claude', status.claudeHook ? `SessionStart hook in ${paths.claudeSettings}` : `no current refs SessionStart hook in ${paths.claudeSettings}; run refs install`);
+    if (status.claudeMcp.error) add('warn', 'claude', status.claudeMcp.error);
+    else if (!status.claudeMcp.present) add('warn', 'claude', `MCP server "refs" not registered at user scope (${paths.claudeJson}); run refs install`);
+    else if (!status.claudeMcp.current) add('warn', 'claude', 'MCP server "refs" points at another checkout or Node; run refs install to update it');
+    else add('ok', 'claude', `MCP server "refs" registered at user scope`);
+  }
+  if (!status.opencode.installed) add('ok', 'opencode', `${paths.opencodeDir} not found; skipped`);
+  else {
+    add(status.opencode.mcp ? 'ok' : 'warn', 'opencode', status.opencode.mcp ? `MCP server "refs" in ${paths.opencodeConfig}` : `MCP server "refs" not registered in ${paths.opencodeConfig}; run refs install`);
+    add(status.opencode.plugin ? 'ok' : 'warn', 'opencode', status.opencode.plugin ? `session index plugin ${paths.opencodePlugin}` : `session index plugin missing or out of date (${paths.opencodePlugin}); run refs install`);
+  }
 }
 
 async function ollamaChecks(config: Config, add: Add): Promise<void> {

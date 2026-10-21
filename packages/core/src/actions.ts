@@ -7,7 +7,8 @@ import { refreshHookCache } from './hookcache.ts';
 import { withLock } from './lock.ts';
 import { findById, readManifest, writeManifest, type Sheet } from './manifest.ts';
 import { normPath } from './paths.ts';
-import { readRules } from './rules.ts';
+import { acceptReview } from './review.ts';
+import { addTagsToVocab, readRules } from './rules.ts';
 import { logUsage } from './usage.ts';
 import { RefsError, normalizeTag, today } from './util.ts';
 
@@ -62,6 +63,43 @@ export function verifySheet(config: Config, id: string): Promise<SheetChange> {
     },
     (s) => `refs: verify ${s.id}`,
   );
+}
+
+export interface ApproveResult extends SheetChange {
+  /** Status before approval. */
+  from: Sheet['status'];
+  /** Tags new to the library, now in tags.json. */
+  addedToVocab: string[];
+}
+
+/**
+ * refs approve <id>: a draft or pending sheet becomes verified with lastVerified today.
+ * A pending sheet takes its proposed tags (as refs review --accept does). Drafts keep
+ * source llm and their llm record as provenance.
+ */
+export async function approveSheet(config: Config, id: string): Promise<ApproveResult> {
+  const before = findById(readManifest(config.library), id);
+  if (!before) throw new RefsError(`no sheet with id ${id}.`);
+  if (before.status === 'pending') {
+    if (!before.tags.length && !before.proposal?.tags.length) throw new RefsError(`${id} has no tags yet; give them with refs review ${id} --tags a,b.`);
+    const r = await acceptReview(config, id, before.tags.length && !before.proposal?.tags.length ? { tags: before.tags } : {});
+    return { sheet: r.sheet, changed: true, from: 'pending', addedToVocab: r.addedToVocab, commitError: r.commitError };
+  }
+  return withLock('approve', () => {
+    const sheets = readManifest(config.library);
+    const sheet = findById(sheets, id);
+    if (!sheet) throw new RefsError(`no sheet with id ${id}.`);
+    const from = sheet.status;
+    if (from === 'verified') return { sheet, changed: false, from, addedToVocab: [] };
+    if (from === 'pending') throw new RefsError(`${id} became pending meanwhile; run refs approve ${id} again.`);
+    sheet.status = 'verified';
+    sheet.lastVerified = today();
+    writeManifest(config.library, sheets);
+    const addedToVocab = addTagsToVocab(config.library, sheet.tags);
+    const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `refs: approve ${id} (draft to verified)`);
+    refreshHookCache(config);
+    return { sheet, changed: true, from, addedToVocab, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
+  });
 }
 
 export interface IgnoreGapResult {

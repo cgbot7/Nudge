@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyAgents, planAgents, type AgentPlan, type AgentTargets } from './agents.ts';
 import { RefsError } from './util.ts';
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
@@ -12,8 +13,15 @@ export function repoPaths() {
   return {
     hook: path.join(REPO, 'shell', 'refs-hook.ps1'),
     cli: path.join(REPO, 'packages', 'cli', 'src', 'main.ts'),
+    mcp: path.join(REPO, 'packages', 'mcp', 'src', 'server.ts'),
     bin: path.join(REPO, 'bin'),
   };
+}
+
+/** What the agent registrations run: this Node and this checkout's CLI and MCP server. */
+export function agentTargets(node = process.execPath): AgentTargets {
+  const { cli, mcp } = repoPaths();
+  return { node, cli, server: mcp };
 }
 
 export const HOOK_BEGIN = '# >>> refs hook (managed by refs install) >>>';
@@ -39,7 +47,13 @@ export interface SystemOps {
   info(): SystemInfo;
   writeUserPath(value: string): void;
   taskExists(name: string): boolean;
+  /** The registered task's XML, or null when there is none. */
+  queryTaskXml(name: string): string | null;
   createTask(name: string, xml: string): void;
+  /** claude.exe on PATH, or null. */
+  findClaude(): string | null;
+  /** Run claude.exe with these arguments, no shell. Throws on failure. */
+  runClaude(claude: string, args: string[]): void;
 }
 
 const INFO_SCRIPT = `
@@ -101,6 +115,21 @@ export function realSystem(): SystemOps {
     taskExists(name) {
       const r = spawnSync('schtasks.exe', ['/Query', '/TN', name], { encoding: 'utf8', windowsHide: true });
       return r.status === 0;
+    },
+    queryTaskXml(name) {
+      const r = spawnSync('schtasks.exe', ['/Query', '/XML', '/TN', name], { encoding: 'utf8', windowsHide: true });
+      return r.status === 0 ? r.stdout : null;
+    },
+    findClaude() {
+      const r = spawnSync('where.exe', ['claude.exe'], { encoding: 'utf8', windowsHide: true });
+      const first = r.status === 0 ? r.stdout.split(/\r?\n/).find((l) => l.trim()) : undefined;
+      return first ? first.trim() : null;
+    },
+    runClaude(claude, args) {
+      // A sandboxed home (tests) must never reach the real ~/.claude.json through claude.exe.
+      if (process.env.REFS_HOME_DIR) throw new RefsError('refusing to run claude while REFS_HOME_DIR points at a sandbox home.');
+      const r = spawnSync(claude, args, { encoding: 'utf8', windowsHide: true });
+      if (r.error || r.status !== 0) throw new RefsError(`claude ${args.slice(0, 2).join(' ')} failed: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
     },
     createTask(name, xml) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-task-'));
@@ -237,10 +266,24 @@ export interface ProfileChange {
   content: Buffer;
 }
 
+const xmlUnescape = (s: string) => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+
+/**
+ * The parts of a task definition refs cares about; equal parts mean the task needs no change.
+ * Windows exports the task with entities decoded, the user as a SID and the default
+ * RunLevel left out, so the user is not compared and a missing RunLevel is LeastPrivilege.
+ */
+export function taskSignature(xml: string): string {
+  const pick = (tag: string) => xmlUnescape(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(xml)?.[1]?.trim() ?? '');
+  return [pick('Command'), pick('Arguments'), pick('Interval'), pick('RunLevel') || 'LeastPrivilege'].map((v) => v.toLowerCase()).join('|');
+}
+
 export interface InstallPlan {
   profiles: ProfileChange[];
   block: string;
-  task: { name: string; exists: boolean; spec: TaskSpec; xml: string };
+  /** current: registered with the same command, arguments, schedule and user, so it is left alone. */
+  task: { name: string; exists: boolean; current: boolean; spec: TaskSpec; xml: string };
+  agents: AgentPlan;
   path: { dir: string; kind: string; before: string | null; after: string | null };
   warnings: string[];
 }
@@ -261,6 +304,8 @@ export function planInstall(sys: SystemOps): InstallPlan {
 
   const name = taskName();
   const spec = taskSpec();
+  const xml = taskXml(spec);
+  const existing = sys.queryTaskXml(name);
   const before = info.userPath?.value ?? null;
   const after = addPathEntry(before ?? '', bin);
 
@@ -275,7 +320,8 @@ export function planInstall(sys: SystemOps): InstallPlan {
   return {
     profiles,
     block: hookBlock(hook),
-    task: { name, exists: sys.taskExists(name), spec, xml: taskXml(spec) },
+    task: { name, exists: existing !== null, current: existing !== null && taskSignature(existing) === taskSignature(xml), spec, xml },
+    agents: planAgents(agentTargets(), sys.findClaude()),
     path: { dir: bin, kind: info.userPath?.kind ?? 'ExpandString', before, after },
     warnings,
   };
@@ -291,12 +337,15 @@ export function applyInstall(plan: InstallPlan, sys: SystemOps): string[] {
     fs.writeFileSync(p.file, p.content);
     done.push(`${p.action === 'create' ? 'created' : p.action === 'append' ? 'added the hook to' : 'updated the hook in'} ${p.file}`);
   }
-  sys.createTask(plan.task.name, plan.task.xml);
-  done.push(`${plan.task.exists ? 'replaced' : 'registered'} scheduled task "${plan.task.name}"`);
+  if (!plan.task.current) {
+    sys.createTask(plan.task.name, plan.task.xml);
+    done.push(`${plan.task.exists ? 'replaced' : 'registered'} scheduled task "${plan.task.name}"`);
+  }
   if (plan.path.after !== null) {
     sys.writeUserPath(plan.path.after);
     done.push(`added ${plan.path.dir} to your user PATH (new terminals see it)`);
   }
+  done.push(...applyAgents(plan.agents, (claude, args) => sys.runClaude(claude, args)));
   return done;
 }
 

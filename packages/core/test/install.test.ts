@@ -12,6 +12,7 @@ import {
   installStatus,
   planInstall,
   repoPaths,
+  taskSignature,
   taskSpec,
   taskXml,
   upsertHookBlock,
@@ -58,6 +59,16 @@ test('task XML: logon trigger repeating every 30 minutes, hidden through conhost
   assert.match(xml, /<Arguments>--headless &quot;C:\\Program Files\\nodejs\\node\.exe&quot; &quot;C:\\P &amp; Q\\main\.ts&quot; index --scheduled<\/Arguments>/);
   assert.match(xml, /<RunLevel>LeastPrivilege<\/RunLevel>/);
   assert.match(xml, /<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
+});
+
+test('a task as Windows exports it (decoded quotes, SID, no RunLevel) matches the planned one', () => {
+  const spec = taskSpec('C:\\P & Q\\main.ts', 'C:\\Program Files\\nodejs\\node.exe');
+  const exported = `<?xml version="1.0" encoding="UTF-16"?>\r\r\n<Task version="1.2"><Triggers><LogonTrigger><UserId>S-1-5-21-1-2-3-1001</UserId><Repetition><Interval>PT30M</Interval></Repetition></LogonTrigger></Triggers>
+<Principals><Principal id="Author"><UserId>S-1-5-21-1-2-3-1001</UserId><LogonType>InteractiveToken</LogonType></Principal></Principals>
+<Actions Context="Author"><Exec><Command>${spec.command}</Command><Arguments>--headless "C:\\Program Files\\nodejs\\node.exe" "C:\\P &amp; Q\\main.ts" index --scheduled</Arguments></Exec></Actions></Task>`;
+  assert.equal(taskSignature(exported), taskSignature(taskXml(spec)));
+  assert.notEqual(taskSignature(exported.replace('PT30M', 'PT1H')), taskSignature(taskXml(spec)));
+  assert.notEqual(taskSignature(exported.replace('index --scheduled', 'index')), taskSignature(taskXml(spec)));
 });
 
 test('install plans, applies and is idempotent; existing profiles are backed up and keep their encoding', () => {

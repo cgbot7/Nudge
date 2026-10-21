@@ -49,6 +49,8 @@ export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, un
     // Keep refs install and refs doctor away from the real profiles and scheduled task.
     REFS_DOCUMENTS_DIR: path.join(root, 'documents'),
     REFS_TASK_NAME: `refs-test-${path.basename(root)}`,
+    // Fake home for Claude Code and OpenCode configs; the real ones are never read or written.
+    REFS_HOME_DIR: path.join(root, 'home'),
   };
   Object.assign(process.env, env);
   fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
@@ -57,11 +59,16 @@ export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, un
   return { root, library, work, env: { ...process.env, ...env } };
 }
 
-/** A SystemOps that never touches the machine; records what install would do. */
-export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: boolean; path?: string | null; taskExists?: boolean } = {}) {
-  const calls: { writeUserPath: string[]; createTask: { name: string; xml: string }[] } = { writeUserPath: [], createTask: [] };
+/**
+ * A SystemOps that never touches the machine; records what install would do. Its claude.exe
+ * edits mcpServers in the fake home's .claude.json the way `claude mcp add-json` would.
+ */
+export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: boolean; path?: string | null; taskExists?: boolean; claude?: string | null } = {}) {
+  const calls: { writeUserPath: string[]; createTask: { name: string; xml: string }[]; claude: string[][] } = { writeUserPath: [], createTask: [], claude: [] };
   let pathValue = opts.path === undefined ? '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps' : opts.path;
   let task = opts.taskExists ?? false;
+  let taskXml: string | null = task ? '<Task><Command>other.exe</Command></Task>' : null;
+  const claudeJson = () => path.join(process.env.REFS_HOME_DIR!, '.claude.json');
   const sys = {
     info: () => ({
       documents,
@@ -74,9 +81,21 @@ export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: bo
       pathValue = value;
     },
     taskExists: () => task,
+    queryTaskXml: () => taskXml,
     createTask(name: string, xml: string) {
       calls.createTask.push({ name, xml });
       task = true;
+      taskXml = xml;
+    },
+    findClaude: () => (opts.claude === undefined ? 'C:\fake\claude.exe' : opts.claude),
+    runClaude(_claude: string, args: string[]) {
+      calls.claude.push(args);
+      const file = claudeJson();
+      const data = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { mcpServers?: Record<string, unknown> }) : {};
+      data.mcpServers ??= {};
+      if (args[1] === 'remove') delete data.mcpServers[args.at(-1)!];
+      else if (args[1] === 'add-json') data.mcpServers[args.at(-2)!] = JSON.parse(args.at(-1)!);
+      fs.writeFileSync(file, JSON.stringify(data, null, 2));
     },
   };
   return { sys, calls };

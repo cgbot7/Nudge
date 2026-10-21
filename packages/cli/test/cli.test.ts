@@ -65,9 +65,12 @@ test('end to end: doctor, add, search, open, blocked add, allow', () => {
   assert.match(r.stdout, /\n0 failed/);
 });
 
-test('usage errors and later-milestone commands exit non-zero with a message', () => {
+test('usage errors exit non-zero with a message; suggest says clearly that Ollama is down', () => {
   assert.match(refs('frobnicate').stderr, /unknown command/);
-  assert.match(refs('suggest').stderr, /milestone 4/);
+  const suggest = refs('suggest', t.work);
+  assert.equal(suggest.code, 1);
+  assert.match(suggest.stderr, /refs suggest needs the chat model, and Ollama is not reachable at http:\/\/127\.0\.0\.1:9 \(is it running\?\)\. Start Ollama and try again\./);
+  assert.match(refs('approve').stderr, /usage: refs approve <id>/);
   assert.match(refs('review', 's_0001').stderr, /--accept/);
   assert.match(refs('search', '--bogus').stderr, /Unknown option/);
   assert.match(refs('open', 's_0001', '--section', 'two').stderr, /positive whole number/);

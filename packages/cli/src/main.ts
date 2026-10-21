@@ -9,6 +9,8 @@ import {
   RefsError,
   acceptReview,
   addFile,
+  approveSheet,
+  buildContext,
   allowFinding,
   applyInstall,
   blockingFindings,
@@ -23,6 +25,7 @@ import {
   ignoreGap,
   inboxDir,
   loadConfig,
+  loadSuggestions,
   logUsage,
   ollamaClient,
   openDb,
@@ -35,20 +38,25 @@ import {
   realSystem,
   runDoctor,
   runIndex,
+  saveDraft,
+  saveSuggestions,
   scanProject,
   setLearned,
   sheetAbsPath,
   sheetSections,
+  suggestForProject,
   tagResolver,
   tryRefreshHookCache,
   verifySheet,
   type AiServices,
   type Config,
+  type FileEdit,
   type ExtractOptions,
   type IndexReport,
   type SearchHit,
   type Sheet,
   type SheetInfo,
+  type Suggestion,
 } from '@refs/core';
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -72,20 +80,22 @@ Usage:
   refs for <path | "tag tag"> [--json]   sheets by tag, gaps and unused reminders
   refs scan [path]                       re-detect one project, rewrite its hook cache entry
   refs open <id> [--section <n>] [--app] print a sheet or section; --app opens the default app
+  refs context [--cwd <dir>] [--json]    compact index of matched sheets for an agent's session start
+  refs suggest [path] [--save <n>] [--json]
+                                         LLM recommendations for a project; save one as a draft
+  refs approve <id>                      draft or pending to verified (sets lastVerified)
   refs verify <id>                       set lastVerified to today (clears stale)
   refs learned <id> [--undo]             stop (or resume) reminders for a sheet
   refs ignore-gap <tag> [--project] [--undo]
                                          silence a gap everywhere, or only in this project
   refs allow <file> --finding <n>        allowlist a secret-scan false positive
-  refs install [--dry-run] [--yes]       PowerShell hook, Task Scheduler job, refs on PATH
+  refs install [--dry-run] [--yes]       PowerShell hook, Task Scheduler job, refs on PATH,
+                                         Claude Code hook and MCP server, OpenCode MCP and plugin
   refs doctor                            check config, library, index, rules, hook and schedule
   refs help
 
 Projects are detected under the "roots" folders in config.json. Drop files into the
-library's inbox folder and refs index imports them.
-Coming in milestone 4: context, suggest, approve.`;
-
-const LATER: Record<string, number> = { context: 4, suggest: 4, approve: 4 };
+library's inbox folder and refs index imports them.`;
 
 function out(line = ''): void {
   process.stdout.write(line + '\n');
@@ -516,6 +526,100 @@ async function cmdFor(args: string[]): Promise<number> {
   return 0;
 }
 
+async function cmdContext(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { cwd: { type: 'string' }, json: { type: 'boolean' } } });
+  let dir = values.cwd ?? process.cwd();
+  // A hook whose ${...} placeholder was not substituted passes it through as written. Only
+  // then does CLAUDE_PROJECT_DIR count: Claude Code also exports it to every shell it starts.
+  if (/^\$\{?\w+\}?$/.test(dir)) dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const r = buildContext(config(), dir);
+  if (values.json) out(JSON.stringify(r, null, 2));
+  else if (r.text) out(r.text);
+  return 0;
+}
+
+const suggestCmd = (dir: string) => (dir === '.' ? 'refs suggest' : `refs suggest "${dir}"`);
+
+/** Progress goes to stderr so --json output stays clean. */
+function progress(line: string): void {
+  process.stderr.write(dim(line) + '\n');
+}
+
+const KIND_LABEL = { gap: 'gap', extend: 'extends a topic', new: 'new topic' } as const;
+
+async function cmdSuggest(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { save: { type: 'string' }, json: { type: 'boolean' } } });
+  if (positionals.length > 1) throw new RefsError('usage: refs suggest [path] [--save <n>] [--json]');
+  const dir = positionals[0] ?? '.';
+  const cfg = config();
+  const pick = positiveInt(values.save, '--save');
+  if (pick !== undefined) {
+    const saved = loadSuggestions(cfg, dir);
+    if (!saved) throw new RefsError(`no saved suggestions for this project; run ${suggestCmd(dir)} first.`);
+    const s = saved.suggestions[pick - 1];
+    if (!s) throw new RefsError(`the last refs suggest listed ${plural(saved.suggestions.length, 'suggestion')}; there is no ${pick}.`);
+    return saveDraftReport(cfg, s, saved.project, saved.tags);
+  }
+
+  progress(`asking ${cfg.ollama.chatModel} for suggestions...`);
+  const r = await suggestForProject(cfg, dir);
+  saveSuggestions(r);
+  if (values.json) {
+    out(JSON.stringify(r, null, 2));
+    return 0;
+  }
+  const f = r.facts;
+  out(`project: ${f.project}`);
+  out(`tags: ${f.tags.join(', ')}${f.gaps.length ? `   gaps: ${f.gaps.join(', ')}` : ''}${f.ignoredGaps.length ? dim(`   ignored gaps: ${f.ignoredGaps.join(', ')}`) : ''}`);
+  out(`existing sheets: ${f.existing.length}${Object.keys(f.files).length ? dim(`   read: ${Object.keys(f.files).join(', ')} (as data)`) : ''}`);
+  out('');
+  const retry = r.attempts > 1 ? '; the first reply was unusable, retried at temperature 0' : '';
+  out(dim(`${r.model}, ${(r.tookMs / 1000).toFixed(1)} s, schema-valid${retry}`));
+  if (!r.suggestions.length) out('no usable suggestions this time.');
+  r.suggestions.forEach((s, i) => {
+    out(`${bold(`${i + 1}.`)} ${s.title}  ${dim(`[${s.tags.join(', ')}]`)}  ${s.kind === 'gap' ? yellow('(gap)') : dim(`(${KIND_LABEL[s.kind]})`)}`);
+    out(`   ${s.reason}`);
+    out(dim(`   covers: ${s.outline.join('; ')}`));
+  });
+  if (r.discarded.length) out(dim(`dropped ${plural(r.discarded.length, 'item')} that broke the rules: ${r.discarded.map((d) => `"${d.title}" (${d.why})`).join(', ')}`));
+  if (!r.suggestions.length) return 0;
+  out('');
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    let answer: string;
+    try {
+      answer = (await rl.question(`Save one as a draft? [1-${r.suggestions.length}, Enter to skip] `)).trim();
+    } finally {
+      rl.close();
+    }
+    const n = Number(answer);
+    if (answer && Number.isInteger(n) && r.suggestions[n - 1]) return saveDraftReport(cfg, r.suggestions[n - 1]!, f.project, f.tags);
+    if (answer) out('not a number from the list; nothing saved.');
+  }
+  out(dim(`save one as a draft: ${suggestCmd(dir)} --save <n>`));
+  return 0;
+}
+
+async function saveDraftReport(cfg: Config, s: Suggestion, project: string, projectTags: string[]): Promise<number> {
+  progress(`writing the draft with ${cfg.ollama.chatModel}...`);
+  const r = await saveDraft(cfg, s, { project, projectTags });
+  for (const w of r.warnings) warn(w);
+  out(`${green('saved draft')} ${bold(r.sheet.id)} "${r.sheet.title}" (${r.sheet.file}, ${plural(r.sections, 'section')})`);
+  out(`  status draft: shows as [draft] in refs search, stays out of refs context and the try: reminders. Check it, then run refs approve ${r.sheet.id}`);
+  return 0;
+}
+
+async function cmdApprove(args: string[]): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  if (positionals.length !== 1) throw new RefsError('usage: refs approve <id>');
+  const r = await approveSheet(config(), positionals[0]!);
+  if (!r.changed) out(`${r.sheet.id} is already verified.`);
+  else out(`${green('approved')} ${r.sheet.id} "${r.sheet.title}": ${r.from} to verified, lastVerified ${r.sheet.lastVerified}`);
+  if (r.addedToVocab.length) out(dim(`added to tags.json: ${r.addedToVocab.join(', ')}`));
+  if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+  return 0;
+}
+
 async function cmdVerify(args: string[]): Promise<number> {
   const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
   if (positionals.length !== 1) throw new RefsError('usage: refs verify <id>');
@@ -563,8 +667,11 @@ async function cmdInstall(args: string[]): Promise<number> {
   out('   block:');
   for (const l of plan.block.split(/\r?\n/)) out(`     ${l}`);
   out('');
-  out(`2. Task Scheduler: ${plan.task.exists ? 'replace' : 'register'} task "${plan.task.name}" for ${plan.task.spec.userId}`);
-  out('   at logon, then every 30 minutes, hidden window, standard rights');
+  if (plan.task.current) out(`2. Task Scheduler: no change, task "${plan.task.name}" is already registered with this command and schedule`);
+  else {
+    out(`2. Task Scheduler: ${plan.task.exists ? 'replace' : 'register'} task "${plan.task.name}" for ${plan.task.spec.userId}`);
+    out('   at logon, then every 30 minutes, hidden window, standard rights');
+  }
   out(`   runs: ${plan.task.spec.command} ${plan.task.spec.arguments}`);
   out('');
   if (plan.path.after === null) out(`3. PATH: no change, ${plan.path.dir} is already on your user PATH`);
@@ -574,7 +681,24 @@ async function cmdInstall(args: string[]): Promise<number> {
     out(`   after:  ${plan.path.after}`);
   }
   out('');
-  out(dim('Not touched: execution policy, other profiles, system PATH. MCP registration comes in milestone 4.'));
+  const a = plan.agents;
+  out('4. Claude Code (user scope, every project):');
+  printEdit('settings', a.claudeSettings, 'add a SessionStart hook that runs refs context');
+  const m = a.claudeMcp;
+  out(`   MCP server "refs" (${m.file}, top-level mcpServers):`);
+  if (m.action === 'skip') out(`     skipped: ${m.note}`);
+  else if (m.action === 'none') out('     no change, already registered with this command');
+  else {
+    if (m.note) out(`     ${m.note}`);
+    if (m.backup) out(`     back up the current file to ${m.backup}, then run:`);
+    for (const c of m.commands) out(`     ${m.claude} ${c.map((x) => (/[\s"{]/.test(x) ? `'${x}'` : x)).join(' ')}`);
+  }
+  out('');
+  out('5. OpenCode (global config):');
+  printEdit('config', a.opencodeConfig, 'add mcp.refs');
+  printEdit('plugin', a.opencodePlugin, 'write a plugin that adds refs context to each session (experimental.chat.system.transform)');
+  out('');
+  out(dim('Not touched: execution policy, other profiles, system PATH, any other agent setting.'));
   for (const w of plan.warnings) warn(w);
   if (values['dry-run']) {
     out(dim('\ndry run: nothing was changed.'));
@@ -590,6 +714,23 @@ async function cmdInstall(args: string[]): Promise<number> {
   for (const line of applyInstall(plan, sys)) out(`${green('done')} ${line}`);
   out('Open a new PowerShell window to load the hook.');
   return 0;
+}
+
+function printEdit(label: string, e: FileEdit, what: string): void {
+  out(`   ${label}: ${e.file}`);
+  if (e.action === 'skip') {
+    out(`     skipped: ${e.note}`);
+    if (e.entry) out(`     add by hand: ${JSON.stringify(e.entry)}`);
+    return;
+  }
+  if (e.action === 'none') {
+    out('     no change, already current');
+    return;
+  }
+  out(`     ${e.action === 'create' ? 'create the file and ' : ''}${what}${e.backup ? `; back up the current file to ${e.backup}` : ''}`);
+  if (e.note) out(`     ${e.note}`);
+  if (e.entry) out(`     entry: ${JSON.stringify(e.entry)}`);
+  if (e.kept.length) out(`     kept as is: ${e.kept.join(', ')}`);
 }
 
 async function cmdDoctor(): Promise<number> {
@@ -621,6 +762,12 @@ async function main(argv: string[]): Promise<number> {
       return cmdScan(args);
     case 'for':
       return cmdFor(args);
+    case 'context':
+      return cmdContext(args);
+    case 'suggest':
+      return cmdSuggest(args);
+    case 'approve':
+      return cmdApprove(args);
     case 'verify':
       return cmdVerify(args);
     case 'learned':
@@ -638,7 +785,6 @@ async function main(argv: string[]): Promise<number> {
       out(HELP);
       return 0;
     default:
-      if (cmd in LATER) throw new RefsError(`refs ${cmd} is not built yet (milestone ${LATER[cmd]}).`);
       throw new RefsError(`unknown command "${cmd}". Run refs help.`);
   }
 }

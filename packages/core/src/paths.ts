@@ -28,6 +28,8 @@ export function dataPaths() {
     pendingAllow: path.join(dir, 'pending-allow.json'),
     hookCache: path.join(dir, 'hook-cache.json'),
     lastProject: path.join(dir, 'last-project.json'),
+    /** The last refs suggest list, so --save <n> can pick from it without asking the model again. */
+    suggestions: path.join(dir, 'suggestions.json'),
     logs: path.join(dir, 'logs'),
   };
 }
