@@ -2,6 +2,8 @@
 
 The choices an interviewer is most likely to ask about, with the reason for each and what it costs. The full spec is in [SPEC.md](../SPEC.md); how the parts fit together is in [architecture.md](architecture.md).
 
+> **Note (2026-10-28):** the hook and popup timings quoted in decisions 6 and 9 were measured by hand during development; the repo holds no script or raw data for them. The test count in decision 12 was rechecked on 2026-10-28: 133 of 133 passed, with the test step taking 24.4 s.
+
 ## 1. TypeScript that Node runs directly, no build step
 
 **Decision.** Node 24 runs the `.ts` sources as they are (type stripping). `tsconfig.json` sets `noEmit`, `erasableSyntaxOnly` and `allowImportingTsExtensions`, so TypeScript 7 only typechecks. The popup frontend uses the same idea: `apps/popup/build.ts` calls Node's `stripTypeScriptTypes` and copies the runtime-only Vue build, with no bundler.

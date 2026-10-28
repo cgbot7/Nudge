@@ -22,7 +22,8 @@ flowchart TB
     data[("Derived data, rebuildable<br/>index.db, hook-cache.json, usage.jsonl")]
     lib[("Library, a Git repo<br/>sheets, manifest.json, rules.json")]
   end
-  ollama["Ollama<br/>embeddings, tags, OCR"]
+  ollama["Ollama<br/>embeddings, chat, OCR"]
+  relay["Chat endpoint, optional<br/>ollama.chatHost"]
 
   you -->|cd into a project| hook
   you -->|commands| cli
@@ -35,9 +36,10 @@ flowchart TB
   node -->|"reads; writes under refs.lock"| lib
   node --> data
   node -.->|"HTTP, optional"| ollama
+  node -.->|"chat only, if set"| relay
 ```
 
-The prompt hook also records the project you entered in `last-project.json`, and starts a hidden `refs scan` only for a project folder the cache does not know yet.
+The prompt hook also records the project you entered in `last-project.json`, and starts a hidden `refs scan` only for a project folder the cache does not know yet. Chat goes to `ollama.chatHost` instead of the Ollama host only when that setting is present; with `ollama.chatApi: "openai"` it uses the OpenAI-compatible `/v1/chat/completions` API.
 
 ## Components
 
@@ -82,9 +84,22 @@ flowchart TB
   hook -.->|"reads hook-cache.json"| proj
 ```
 
+## Entry points
+
+Each entry point is thin: it parses its input, loads `config.json` for that call and hands the work to `@refs/core`.
+
+| Entry point | Started by | What it does | What it writes |
+|---|---|---|---|
+| `refs` CLI, `packages/cli/src/main.ts` | You, `bin\refs.cmd` once it is on PATH, and Task Scheduler (`conhost.exe --headless node main.ts index --scheduled`, at logon and every 30 minutes) | 16 commands (`refs help`); arguments parsed with `parseArgs` from `node:util` | Library and data folder, always under `refs.lock`; a scheduled run logs to `logs\index.log` |
+| Prompt hook, `shell/refs-hook.ps1` | The marked block `refs install` adds to the PowerShell 7 and 5.1 profiles; it wraps `prompt` | On a folder change, finds the project in `hook-cache.json` and prints one line | `last-project.json` (current project and "try:" rotation); starts a hidden `refs scan` for an unknown project |
+| MCP server, `packages/mcp/src/server.ts` | Claude Code (registered with `claude mcp add-json --scope user`) and OpenCode (`mcp.refs` in `opencode.json`), over stdio | `refs_search`, `refs_get`, `refs_for_project`; results wrapped as reference data | An `agent_fetch` line in `usage.jsonl`; a hook cache refresh when the lock is free |
+| Session index, `refs context` | Claude Code's SessionStart hook in `~/.claude/settings.json`; OpenCode's plugin `plugins/refs-context.ts` through `experimental.chat.system.transform` | Prints at most 10 matched sheets in about 1,200 characters, drafts left out (`packages/core/src/context.ts`) | Nothing |
+| Popup, `apps/popup/src-tauri/src/main.rs` | The HKCU Run value `refs popup` at logon (with `--node` and `--sidecar`), or by hand; a second start shows the running one | Tray icon, global hotkey, a hidden pre-rendered window that hides when it loses focus | `logs\popup.log`, including the hotkey to painted time from `shown_ack`; the WebView2 profile in `webview\` |
+| Sidecar, `packages/sidecar/src/main.ts` | The popup, restarted at most 5 times a minute | JSON line methods `ping`, `hello`, `search`, `preview`, `learned`, `verify`, `approve`, `openFile`, `openLink` (`handlers.ts`) | Usage events and manifest changes through core, waiting at most 2 s for the lock |
+
 ## A popup search, from hotkey to a learned sheet
 
-The window is created hidden and already rendered at startup, so the hotkey only shows it (measured at 8 ms to visible, about 16 ms to the first painted frame). Every keystroke gets a keyword pass; a hybrid pass follows when typing pauses, and replies for older keystrokes are dropped. Messages between the UI and the sidecar pass through the Rust process, which the diagram leaves out.
+The window is created hidden and already rendered at startup, so the hotkey only shows it. The Rust side logs the time from hotkey to the first painted frame in `logs\popup.log`. Every keystroke gets a keyword pass; a hybrid pass follows when typing pauses, and replies for older keystrokes are dropped. Messages between the UI and the sidecar pass through the Rust process, which the diagram leaves out.
 
 ```mermaid
 sequenceDiagram
@@ -101,7 +116,7 @@ sequenceDiagram
     U->>W: type
     W->>S: search, keyword pass, seq n
     S->>C: hybridSearch without a client (FTS5 bm25)
-    S-->>W: hits, under 100 ms
+    S-->>W: hits
   end
   Note over W: typing pauses for 250 ms
   W->>S: search, hybrid pass, seq n
@@ -142,8 +157,8 @@ flowchart LR
   lock -->|yes| sync["syncLibrary: edited sheets<br/>extracted and scanned again,<br/>renames matched by SHA256;<br/>--rebuild deletes index.db"]
   sync --> kind{"processInbox:<br/>each inbox file"}
   kind -->|"same SHA256"| dup["to _duplicates,<br/>with a reason file"]
-  kind -->|"likely secret"| blocked["to _blocked, reason<br/>names line and rule"]
-  kind -->|"image, Ollama down"| waits["stays in the inbox"]
+  kind -->|"likely secret, or unreadable"| blocked["to _blocked, reason<br/>names line and rule"]
+  kind -->|"needs OCR while Ollama is down,<br/>or locked by another program"| waits["stays in the inbox"]
   kind -->|clean| imported["into sheets as pending,<br/>tags proposed or queued, commit"]
   dup --> work
   blocked --> work
@@ -198,6 +213,36 @@ erDiagram
   }
 ```
 
+`openDb` in `db.ts` creates this schema at version 3 (`PRAGMA user_version`) and migrates older index files in place. The FTS5 table uses the `porter unicode61 remove_diacritics 2` tokenizer.
+
+## Files on disk
+
+| Where | File | Written by | Purpose |
+|---|---|---|---|
+| Library (default `%USERPROFILE%\refs-library`, a Git repo) | `sheets\<id>-<slug>.<ext>` | Import | Imported sheets |
+| | `drafts\<id>-<slug>.md` | `refs suggest --save` | LLM drafts until `refs approve` |
+| | `ocr\<sha256>.txt` | Import, `refs index` | OCR text, so a rebuild needs no vision model |
+| | `manifest.json` | Every library change | One entry per sheet: the record of truth |
+| | `rules.json`, `tags.json` | Seeded with defaults (19 rules), then edited by you; `tags.json` also by review | Project signature rules; tag aliases |
+| | `gap-ignores.json` | `refs ignore-gap` | Gaps silenced everywhere or per project |
+| | `inbox\`, `inbox\_blocked\`, `inbox\_duplicates\` | You, `refs index` | Drop folder (ignored by Git); parked files with `.reason.txt` beside them |
+| `%APPDATA%\refs\` | `config.json` | You, or `refs add` with defaults | Machine settings |
+| | `backups\run-key.reg.refs-backup-<time>` | `refs install` | Run key backup before the popup value is replaced |
+| `%LOCALAPPDATA%\refs\` (rebuildable) | `index.db` | Import, `refs index` | Sections, FTS5, vectors |
+| | `extract-cache\<sha256>.txt` | Import, `refs index` | Extracted text that passed the secret scan |
+| | `hook-cache.json` | `refs index`, `refs scan`, actions that refresh it | What the prompt hook reads |
+| | `last-project.json` | The prompt hook | Current project and "try:" rotation, read by search and the popup |
+| | `usage.jsonl` | `refs open`, popup, MCP `refs_get`, learned | Usage events: `open`, `agent_fetch`, `learned` |
+| | `refs.lock` | Any writer | Single-writer lock (holder pid, time, command) |
+| | `pending-allow.json`, `suggestions.json` | `refs allow` before import; `refs suggest` | Allowlist entries for files not imported yet; the last suggestion list for `--save <n>` |
+| | `logs\index.log`, `logs\popup.log`, `webview\` | Scheduled index; popup | Logs; the popup's WebView2 profile |
+
+Deleting `%LOCALAPPDATA%\refs\` loses usage history, the "try:" rotation and allowlist entries for files not imported yet; `refs index --rebuild` recreates the rest from the library.
+
+## Configuration
+
+`packages/core/src/config.ts` validates `%APPDATA%\refs\config.json` with zod and fills defaults: `library`, `roots`, `ollama` (`host`, `embedModel`, `chatModel`, `visionModel`, optional `chatHost`, `chatApi`, `chatApiKeyEnv`), `staleAfterDays` (180), `unusedAfterDays` (30), `hotkey` (`Ctrl+Alt+Space`) and `ocrMaxPages` (50). The CLI, the MCP server and the sidecar read it on every call, so edits apply without restarting the MCP server or the popup. The prompt hook never reads it; it only reads the hook cache. `chatApiKeyEnv` holds the name of an environment variable, never the token itself. The README lists every setting and every environment variable the code reads.
+
 ## Trust boundaries
 
 | Boundary | Risk | Where the code handles it |
@@ -211,7 +256,7 @@ erDiagram
 | Links clicked in the popup | Opening `file:` or custom schemes | `sidecar/src/handlers.ts` `openLink` allows http, https and mailto only |
 | Your machine (profiles, scheduler, PATH, Run key, agent configs) | Unwanted or lost settings | `install.ts` and `agents.ts`: every change is planned and shown first, `--dry-run`, confirmation, backups; files with comments are never rewritten |
 | Two writers at once | A torn manifest or cache | `lock.ts` `acquireLock`, `util.ts` `writeFileAtomic` (temp file then rename) |
-| The network | Data leaving the machine | Only the configured Ollama host is called (`ollama.ts`); tests make any call to port 11434 throw (`core/test/helpers.ts`) |
+| The network | Data leaving the machine | `ollama.ts` is the only HTTP client: it calls `ollama.host`, and for chat `ollama.chatHost` when that is set (with a bearer token read from the variable named in `chatApiKeyEnv`). Nothing else makes network calls; Git only pushes when you run `git push`. Tests make any call to port 11434 throw (`core/test/helpers.ts`) |
 
 ## Where to look in the code
 
