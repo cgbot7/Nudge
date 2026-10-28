@@ -191,13 +191,12 @@ Build the popup (writes `apps\popup\src-tauri\target\release\refs-popup.exe`):
 npm run popup:build
 ```
 
-Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Bash) and `add`, `index`, `search`, `open`, `doctor` in a sandboxed profile with Ollama unreachable were run and worked. `refs install --dry-run` was run and changed nothing; applying `refs install` was not part of the audit. `npm run popup:build` was not run (a release build); `tools\check.cmd` ran the frontend build and `cargo check`. Commands that use Ollama were not run against a real model.
+Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Bash and from PowerShell 7) and `add`, `index`, `search`, `open`, `doctor` in a sandboxed profile with Ollama unreachable were run and worked. `refs install --dry-run` was run and changed nothing; applying `refs install` was not part of the audit. `npm run popup:build` was not run (a release build); `tools\check.cmd` ran the frontend build and `cargo check`. Commands that use Ollama were not run against a real model.
 
 ## Known limitations
 
 - Windows only, and the prompt hook is PowerShell only.
 - Windows PowerShell 5.1 runs the hook only if its execution policy lets profiles load; `refs install` warns when it does not.
-- Started from a PowerShell 7 session, `tools\check.cmd` fails one test (`install --dry-run shows the agent plan for the fake home and changes nothing` in `packages/cli/test/m4.test.ts`): the child Windows PowerShell 5.1 cannot load `Get-ExecutionPolicy`. Started from Git Bash, all 133 tests pass.
 - Images and scanned PDF pages need the vision model. While Ollama is down, `refs add` refuses them and the inbox keeps them for a later `refs index`.
 - Only the first `ocrMaxPages` scanned pages of a PDF are OCR'd; the rest are not searchable and not secret-scanned.
 - `refs suggest` and draft writing need the chat model and have no fallback.

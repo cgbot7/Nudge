@@ -105,11 +105,17 @@ $r = [UIntPtr]::Zero
 [void][RefsInstall.Win32]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
 `;
 
+// A PSModulePath inherited from a PowerShell 7 session lists pwsh's own copies of the
+// built-in modules first, and Windows PowerShell then fails to load Microsoft.PowerShell.Security
+// ("Get-ExecutionPolicy ... the module could not be loaded"). pwsh resets the variable when it
+// starts powershell.exe itself; node does not, so drop it and let Windows PowerShell build its default.
 function powershell(script: string, env: NodeJS.ProcessEnv = {}) {
+  const childEnv = { ...process.env, ...env };
+  for (const name of Object.keys(childEnv)) if (name.toLowerCase() === 'psmodulepath') delete childEnv[name];
   return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
     windowsHide: true,
-    env: { ...process.env, ...env },
+    env: childEnv,
   });
 }
 
