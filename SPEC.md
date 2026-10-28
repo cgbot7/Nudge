@@ -1,5 +1,7 @@
 # refs: personal cheat sheet index
 
+> **Status (2026-10-28):** all five milestones below are built. This file is the plan they were built from and is kept as written. Where the code differs: the default chat and vision model is `mistral-small3.2:24b`; the MCP server uses `@modelcontextprotocol/server` 2.3.1 instead of `@modelcontextprotocol/sdk`; the library also holds `gap-ignores.json` and `ocr\<sha256>.txt`, and `%LOCALAPPDATA%\refs` also holds `pending-allow.json` and `suggestions.json`; `refs install` also puts `bin` on the user PATH and starts the popup at logon. For the current behavior see [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
+
 Spec for a local tool that collects every cheat sheet and reference note into one library and puts the right ones in front of you automatically, in the terminal, in your AI agent, and in a hotkey popup.
 
 ## Goal
