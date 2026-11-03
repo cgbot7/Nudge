@@ -15,8 +15,10 @@
   "scripts": {
     "refs": "node packages/cli/src/main.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p apps/popup/tsconfig.json",
-    "test": "node --test --test-concurrency=4 \"packages/*/test/*.test.ts\" \"apps/*/test/*.test.ts\"",
-    "popup:build": "node --disable-warning=ExperimentalWarning apps/popup/build.ts"
+    "test": "node --test --test-concurrency=4 \"packages/*/test/*.test.ts\" \"apps/*/test/*.test.ts\" \"tools/test/*.test.ts\"",
+    "popup:build": "node --disable-warning=ExperimentalWarning apps/popup/build.ts",
+    "bench": "node tools/bench.ts",
+    "eval": "node tools/eval.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
