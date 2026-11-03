@@ -13,7 +13,7 @@ declare global {
 }
 
 export const invoke = <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => window.__TAURI__.core.invoke<T>(cmd, args);
-/** One line in %LOCALAPPDATA%\refs\logs\popup.log (release builds have no devtools). */
+/** One line in %LOCALAPPDATA%\nudge\logs\popup.log (release builds have no devtools). */
 export const report = (line: string): void => void invoke('log_line', { line }).catch(() => {});
 export const listen = <T>(event: string, handler: (payload: T) => void): Promise<() => void> => window.__TAURI__.event.listen<T>(event, (e) => handler(e.payload));
 

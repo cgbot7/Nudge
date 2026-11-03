@@ -1,22 +1,22 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { RefsError, decodeText, errorMessage } from './util.ts';
+import { NudgeError, decodeText, errorMessage } from './util.ts';
 
-// Claude Code and OpenCode registration for refs install and refs doctor.
+// Claude Code and OpenCode registration for nudge install and nudge doctor.
 // Claude Code: the SessionStart hook goes into ~/.claude/settings.json (user scope, merged
 // by key so other settings stay as they are), and the MCP server is registered at user
 // scope through `claude mcp add-json`, so Claude Code's own writer edits ~/.claude.json.
-// OpenCode: mcp.refs in ~/.config/opencode/opencode.json and a small plugin file that
-// adds `refs context` to the system prompt of each session.
+// OpenCode: mcp.nudge in ~/.config/opencode/opencode.json and a small plugin file that
+// adds `nudge context` to the system prompt of each session.
 
 /**
- * Where the agent configs live. REFS_HOME_DIR replaces the home folder (tests use a fake
+ * Where the agent configs live. NUDGE_HOME_DIR replaces the home folder (tests use a fake
  * one) and then CLAUDE_CONFIG_DIR and XDG_CONFIG_HOME are ignored, so a sandbox can never
  * reach the real configs.
  */
 export function agentPaths() {
-  const sandbox = process.env.REFS_HOME_DIR;
+  const sandbox = process.env.NUDGE_HOME_DIR;
   const home = sandbox || os.homedir();
   const claudeConfigDir = sandbox ? undefined : process.env.CLAUDE_CONFIG_DIR;
   const claudeDir = claudeConfigDir || path.join(home, '.claude');
@@ -31,12 +31,12 @@ export function agentPaths() {
     claudeJson: claudeConfigDir ? path.join(claudeConfigDir, '.claude.json') : path.join(home, '.claude.json'),
     opencodeDir,
     opencodeConfig: !fs.existsSync(path.join(opencodeDir, 'opencode.json')) && fs.existsSync(jsonc) ? jsonc : path.join(opencodeDir, 'opencode.json'),
-    opencodePlugin: path.join(opencodeDir, 'plugins', 'refs-context.ts'),
+    opencodePlugin: path.join(opencodeDir, 'plugins', 'nudge-context.ts'),
   };
 }
 
-export const MCP_SERVER_NAME = 'refs';
-export const PLUGIN_MARKER = '// refs-context: managed by refs install';
+export const MCP_SERVER_NAME = 'nudge';
+export const PLUGIN_MARKER = '// nudge-context: managed by nudge install';
 
 export interface AgentTargets {
   node: string;
@@ -66,8 +66,8 @@ export function opencodeMcpEntry(t: AgentTargets) {
 
 const slashKey = (p: unknown) => (typeof p === 'string' ? p.replace(/\\/g, '/').toLowerCase() : '');
 
-/** A SessionStart handler that runs `refs context`, wherever this checkout was when it was added. */
-export function isRefsContextHandler(h: unknown): boolean {
+/** A SessionStart handler that runs `nudge context`, wherever this checkout was when it was added. */
+export function isNudgeContextHandler(h: unknown): boolean {
   if (!h || typeof h !== 'object') return false;
   const { command, args } = h as { command?: unknown; args?: unknown };
   if (Array.isArray(args)) return args.includes('context') && args.some((a) => slashKey(a).endsWith('packages/cli/src/main.ts'));
@@ -93,7 +93,7 @@ export interface FileEdit {
   backup: string | null;
   /** New file content (null when nothing is written). */
   content: string | null;
-  /** The entry refs adds or replaces, for the plan shown before applying. */
+  /** The entry nudge adds or replaces, for the plan shown before applying. */
   entry: unknown;
   /** Top-level keys (or the like) left exactly as they are. */
   kept: string[];
@@ -105,7 +105,7 @@ function stamp(now: Date): string {
 }
 
 export function backupName(file: string, now = new Date()): string {
-  return `${file}.refs-backup-${stamp(now)}`;
+  return `${file}.nudge-backup-${stamp(now)}`;
 }
 
 interface JsonDoc {
@@ -124,9 +124,9 @@ function readJsonDoc(file: string): JsonDoc {
   try {
     data = raw.trim() ? JSON.parse(raw) : {};
   } catch (e) {
-    throw new RefsError(`${file} is not plain JSON (${errorMessage(e)}); refs will not rewrite it. Add the entry shown by hand.`);
+    throw new NudgeError(`${file} is not plain JSON (${errorMessage(e)}); nudge will not rewrite it. Add the entry shown by hand.`);
   }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new RefsError(`${file} does not hold a JSON object; refs will not rewrite it.`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new NudgeError(`${file} does not hold a JSON object; nudge will not rewrite it.`);
   const indent = /\n([ \t]+)"/.exec(raw)?.[1] ?? '  ';
   return { data: data as Record<string, unknown>, indent, eol: original.includes('\r\n') ? '\r\n' : '\n', exists: true };
 }
@@ -139,7 +139,7 @@ function skipped(file: string, note: string, entry: unknown): FileEdit {
   return { file, action: 'skip', note, backup: null, content: null, entry, kept: [] };
 }
 
-/** Add or update the refs SessionStart handler in Claude Code's user settings.json. */
+/** Add or update the nudge SessionStart handler in Claude Code's user settings.json. */
 export function planClaudeSettings(t: AgentTargets, now = new Date()): FileEdit {
   const { claudeSettings: file } = agentPaths();
   const handler = claudeHookHandler(t);
@@ -151,15 +151,15 @@ export function planClaudeSettings(t: AgentTargets, now = new Date()): FileEdit 
   }
   const kept = Object.keys(doc.data).flatMap((k) => (k === 'hooks' && doc.data.hooks && typeof doc.data.hooks === 'object' ? Object.keys(doc.data.hooks).filter((e) => e !== 'SessionStart').map((e) => `hooks.${e}`) : k === 'hooks' ? [] : [k]));
   const hooks = (doc.data.hooks ?? {}) as Record<string, unknown>;
-  if (typeof hooks !== 'object' || Array.isArray(hooks)) return skipped(file, `"hooks" in ${file} is not an object; refs will not rewrite it.`, handler);
+  if (typeof hooks !== 'object' || Array.isArray(hooks)) return skipped(file, `"hooks" in ${file} is not an object; nudge will not rewrite it.`, handler);
   const groups = (hooks.SessionStart ?? []) as unknown[];
-  if (!Array.isArray(groups)) return skipped(file, `"hooks.SessionStart" in ${file} is not a list; refs will not rewrite it.`, handler);
+  if (!Array.isArray(groups)) return skipped(file, `"hooks.SessionStart" in ${file} is not a list; nudge will not rewrite it.`, handler);
 
   const handlersOf = (g: unknown): unknown[] => {
     const list = (g as { hooks?: unknown })?.hooks;
     return Array.isArray(list) ? list : [];
   };
-  const others = groups.flatMap(handlersOf).filter((h) => !isRefsContextHandler(h)).length;
+  const others = groups.flatMap(handlersOf).filter((h) => !isNudgeContextHandler(h)).length;
   if (others) kept.push(`${others} other SessionStart hook${others === 1 ? '' : 's'}`);
   let action: EditAction = doc.exists ? 'update' : 'create';
   let note: string | undefined;
@@ -167,7 +167,7 @@ export function planClaudeSettings(t: AgentTargets, now = new Date()): FileEdit 
   for (const g of groups) {
     const list = (g as { hooks?: unknown })?.hooks;
     if (!Array.isArray(list)) continue;
-    const i = list.findIndex(isRefsContextHandler);
+    const i = list.findIndex(isNudgeContextHandler);
     if (i < 0) continue;
     found = true;
     if (sameJson(list[i], handler)) action = 'none';
@@ -190,16 +190,16 @@ export interface ClaudeMcpPlan {
   /** claude.exe that runs the registration. */
   claude: string | null;
   entry: ReturnType<typeof claudeMcpEntry>;
-  /** What ~/.claude.json has for refs now (user scope). */
+  /** What ~/.claude.json has for nudge now (user scope). */
   current: unknown;
-  /** Commands refs install runs, in order. */
+  /** Commands nudge install runs, in order. */
   commands: string[][];
   /** Copy of ~/.claude.json written before running them. */
   backup: string | null;
   file: string;
 }
 
-/** The refs entry in ~/.claude.json at user scope (top-level mcpServers), if any. */
+/** The nudge entry in ~/.claude.json at user scope (top-level mcpServers), if any. */
 export function readClaudeMcp(): { file: string; entry: unknown; error?: string } {
   const file = agentPaths().claudeJson;
   if (!fs.existsSync(file)) return { file, entry: undefined };
@@ -224,7 +224,7 @@ export function planClaudeMcp(t: AgentTargets, claude: string | null, now = new 
   return { ...base, action: 'update', note: `replaces ${JSON.stringify(current)}`, commands: [['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], add], backup };
 }
 
-/** Add or update mcp.refs in OpenCode's global config. */
+/** Add or update mcp.nudge in OpenCode's global config. */
 export function planOpenCodeConfig(t: AgentTargets, now = new Date()): FileEdit {
   const { opencodeConfig: file, opencodeDir } = agentPaths();
   const entry = opencodeMcpEntry(t);
@@ -236,7 +236,7 @@ export function planOpenCodeConfig(t: AgentTargets, now = new Date()): FileEdit 
     return skipped(file, errorMessage(e), entry);
   }
   const mcp = (doc.data.mcp ?? {}) as Record<string, unknown>;
-  if (typeof mcp !== 'object' || Array.isArray(mcp)) return skipped(file, `"mcp" in ${file} is not an object; refs will not rewrite it.`, entry);
+  if (typeof mcp !== 'object' || Array.isArray(mcp)) return skipped(file, `"mcp" in ${file} is not an object; nudge will not rewrite it.`, entry);
   const kept = [...Object.keys(doc.data).filter((k) => k !== 'mcp'), ...Object.keys(mcp).filter((k) => k !== MCP_SERVER_NAME).map((k) => `mcp.${k}`)];
   const current = mcp[MCP_SERVER_NAME] as { command?: unknown } | undefined;
   if (current && Array.isArray(current.command) && sameCommand({ command: current.command[0], args: current.command.slice(1) }, { command: t.node, args: [t.server] }) && (current as { enabled?: unknown }).enabled !== false) {
@@ -250,21 +250,21 @@ export function planOpenCodeConfig(t: AgentTargets, now = new Date()): FileEdit 
 }
 
 /**
- * OpenCode plugin: on the first system prompt of each session it runs refs context for
+ * OpenCode plugin: on the first system prompt of each session it runs nudge context for
  * the session's folder (no shell) and keeps adding that text to the session's system prompt.
  * experimental.chat.system.transform is the hook OpenCode 1.19 offers for this.
  */
 export function opencodePluginSource(t: AgentTargets): string {
-  return `${PLUGIN_MARKER}. Do not edit; refs install rewrites it.
-// Adds the refs cheat sheet index for the session's folder (refs context --cwd <dir>) to
-// the system prompt, so the agent knows which sheets exist and can fetch them with refs_get.
+  return `${PLUGIN_MARKER}. Do not edit; nudge install rewrites it.
+// Adds the nudge cheat sheet index for the session's folder (nudge context --cwd <dir>) to
+// the system prompt, so the agent knows which sheets exist and can fetch them with nudge_get.
 import { execFile } from "node:child_process"
 
 const NODE = ${JSON.stringify(t.node)}
 const CLI = ${JSON.stringify(t.cli)}
 const bySession = new Map<string, Promise<string>>()
 
-function refsContext(dir: string): Promise<string> {
+function nudgeContext(dir: string): Promise<string> {
   return new Promise((resolve) => {
     execFile(NODE, [CLI, "context", "--cwd", dir], { timeout: 15000, windowsHide: true }, (error, stdout) => {
       resolve(error ? "" : String(stdout).trim())
@@ -272,12 +272,12 @@ function refsContext(dir: string): Promise<string> {
   })
 }
 
-export const RefsContext = async ({ directory }: { directory: string }) => ({
+export const NudgeContext = async ({ directory }: { directory: string }) => ({
   "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
     const key = input.sessionID ?? ""
     let text = bySession.get(key)
     if (!text) {
-      text = refsContext(directory)
+      text = nudgeContext(directory)
       bySession.set(key, text)
     }
     const value = await text
@@ -293,7 +293,7 @@ export function planOpenCodePlugin(t: AgentTargets, now = new Date()): FileEdit 
   if (!fs.existsSync(opencodeDir)) return skipped(file, `${opencodeDir} does not exist (OpenCode not installed?)`, null);
   if (!fs.existsSync(file)) return { file, action: 'create', backup: null, content, entry: null, kept: [] };
   const current = fs.readFileSync(file, 'utf8');
-  if (!current.startsWith(PLUGIN_MARKER)) return skipped(file, `${file} exists and was not written by refs; refs will not overwrite it.`, null);
+  if (!current.startsWith(PLUGIN_MARKER)) return skipped(file, `${file} exists and was not written by nudge; nudge will not overwrite it.`, null);
   if (current === content) return { file, action: 'none', backup: null, content: null, entry: null, kept: [] };
   return { file, action: 'update', backup: backupName(file, now), content, entry: null, kept: [] };
 }
@@ -342,7 +342,7 @@ export function applyAgents(plan: AgentPlan, runClaude: (claude: string, args: s
 
 export interface AgentStatus {
   claudeHook: boolean;
-  /** The refs entry at user scope in ~/.claude.json, and whether it points at this checkout. */
+  /** The nudge entry at user scope in ~/.claude.json, and whether it points at this checkout. */
   claudeMcp: { present: boolean; current: boolean; error?: string };
   opencode: { installed: boolean; mcp: boolean; plugin: boolean };
 }
@@ -353,7 +353,7 @@ export function agentStatus(t: AgentTargets): AgentStatus {
   let claudeHook = false;
   try {
     const hooks = (readJsonDoc(p.claudeSettings).data.hooks as { SessionStart?: { hooks?: unknown[] }[] } | undefined)?.SessionStart ?? [];
-    claudeHook = Array.isArray(hooks) && hooks.some((g) => Array.isArray(g?.hooks) && g.hooks.some((h) => isRefsContextHandler(h) && sameJson(h, claudeHookHandler(t))));
+    claudeHook = Array.isArray(hooks) && hooks.some((g) => Array.isArray(g?.hooks) && g.hooks.some((h) => isNudgeContextHandler(h) && sameJson(h, claudeHookHandler(t))));
   } catch {
     // Unreadable settings: reported as not registered.
   }

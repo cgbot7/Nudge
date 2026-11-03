@@ -50,7 +50,7 @@ function editSheet(id: string, change: (s: Sheet) => void) {
   writeManifest(t.library, sheets);
 }
 
-test('refs index writes the hook cache: tags, counts, gaps and try', async () => {
+test('nudge index writes the hook cache: tags, counts, gaps and try', async () => {
   await runIndex(config);
   const e = entry();
   assert.deepEqual(e.tags, ['node', 'docker', 'playwright']);
@@ -58,8 +58,8 @@ test('refs index writes the hook cache: tags, counts, gaps and try', async () =>
   assert.equal(e.stale, 0);
   assert.deepEqual(e.gaps, ['playwright']);
   assert.deepEqual(e.try, ['Docker basics', 'Node tips', 'Docker volumes']);
-  assert.equal(hookLine(e), 'refs [node, docker, playwright] 3 sheets | gap: playwright | try: "Docker basics" | refs for .');
-  assert.equal(hookLine(e, 1), 'refs [node, docker, playwright] 3 sheets | gap: playwright | try: "Node tips" | refs for .');
+  assert.equal(hookLine(e), 'nudge [node, docker, playwright] 3 sheets | gap: playwright | try: "Docker basics" | nudge for .');
+  assert.equal(hookLine(e, 1), 'nudge [node, docker, playwright] 3 sheets | gap: playwright | try: "Node tips" | nudge for .');
   assert.deepEqual(readHookCache()?.roots, [normPath(root).toLowerCase()]);
 });
 
@@ -74,7 +74,7 @@ test('the cache file is JSON with one project per line, each starting with its k
   const projectLines = lines.slice(1, -1);
   assert.equal(projectLines.length, 2);
   for (const l of projectLines) assert.match(l, /^\{"key":"[^"]+",/);
-  assert.equal(hookLine(entry(path.join(root, 'notes'))), 'refs: no tags (add a rule to rules.json)');
+  assert.equal(hookLine(entry(path.join(root, 'notes'))), 'nudge: no tags (add a rule to rules.json)');
 });
 
 test('unused: never used or not used in unusedAfterDays, and not learned', () => {
@@ -104,7 +104,7 @@ test('opening a sheet drops it from try: until unusedAfterDays passes', async ()
   assert.deepEqual(entry().try, ['Node tips', 'Docker volumes', 'Docker basics'], 'unused again after 30 days, least recent last');
 });
 
-test('refs learned retires reminders; --undo lets them resume once the sheet goes unused', async () => {
+test('nudge learned retires reminders; --undo lets them resume once the sheet goes unused', async () => {
   await runIndex(config);
   const r = await setLearned(config, 's_0003', true);
   assert.equal(r.changed, true);
@@ -121,11 +121,11 @@ test('refs learned retires reminders; --undo lets them resume once the sheet goe
   assert.deepEqual(entry().try, ['Docker basics', 'Node tips', 'Docker volumes']);
 });
 
-test('stale sheets show in the hook line; refs verify clears them', async () => {
+test('stale sheets show in the hook line; nudge verify clears them', async () => {
   editSheet('s_0001', (s) => (s.lastVerified = isoDaysAgo(200)));
   await runIndex(config);
   assert.equal(entry().stale, 1);
-  assert.match(hookLine(entry()), /^refs \[node, docker, playwright\] 3 sheets \(1 stale\) \| gap: playwright/);
+  assert.match(hookLine(entry()), /^nudge \[node, docker, playwright\] 3 sheets \(1 stale\) \| gap: playwright/);
   const r = await verifySheet(config, 's_0001');
   assert.equal(r.sheet.lastVerified, today());
   assert.equal(entry().stale, 0);
@@ -153,7 +153,7 @@ test('gaps can be ignored globally or for one project', async () => {
   assert.deepEqual(forTarget(config, app).ignoredGaps, ['playwright']);
 });
 
-test('refs scan re-detects one project and keeps the other entries', async () => {
+test('nudge scan re-detects one project and keeps the other entries', async () => {
   const other = path.join(root, 'tool');
   fs.mkdirSync(other);
   await runIndex(config);
@@ -167,7 +167,7 @@ test('refs scan re-detects one project and keeps the other entries', async () =>
   await assert.rejects(scanProject(config, root), /registered root itself/);
 });
 
-test('a project added by refs scan below the discovery depth survives the next index', async () => {
+test('a project added by nudge scan below the discovery depth survives the next index', async () => {
   const deep = path.join(root, 'a', 'b', 'c', 'd', 'e');
   write(deep, 'Cargo.toml', '[package]\n');
   await scanProject(config, deep);
@@ -175,7 +175,7 @@ test('a project added by refs scan below the discovery depth survives the next i
   assert.deepEqual(entry(deep).tags, ['rust']);
 });
 
-test('refs for groups sheets by tag, with gaps and unused reminders', async () => {
+test('nudge for groups sheets by tag, with gaps and unused reminders', async () => {
   const r = forTarget(config, 'docker node playwright');
   assert.equal(r.project, null);
   assert.deepEqual(r.byTag.map((g) => [g.tag, g.sheets.map((s) => s.id)]), [

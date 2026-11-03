@@ -144,7 +144,7 @@ function main(args: string[]): number {
   const cmd = args.includes('--check') ? ['check', '--locked', '--quiet'] : ['build', '--release', '--locked'];
   const r = spawnSync(cargo(), cmd, { cwd: TAURI, stdio: 'inherit', windowsHide: true });
   if (r.error) throw r.error;
-  if (r.status === 0 && !args.includes('--check')) console.log(`popup: ${path.join(TAURI, 'target', 'release', 'refs-popup.exe')}`);
+  if (r.status === 0 && !args.includes('--check')) console.log(`popup: ${path.join(TAURI, 'target', 'release', 'nudge-popup.exe')}`);
   return r.status ?? 1;
 }
 

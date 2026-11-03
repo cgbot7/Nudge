@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
-import { errorMessage } from '@refs/core';
+import { errorMessage } from '@nudge/core';
 import { SidecarError, createHandlers, type Handlers } from './handlers.ts';
 
 // The popup's backend: the popup starts it with node.exe and keeps it running while the
 // popup runs. One JSON object per line on stdin and stdout. Requests are answered as they
 // finish, so a hybrid search waiting on Ollama never holds up a keyword search behind it.
 // stdout carries the protocol only; anything else goes to stderr (the popup logs it).
-// Nothing else in refs needs this process: hook, MCP server and CLI work without it.
+// Nothing else in nudge needs this process: hook, MCP server and CLI work without it.
 
 console.log = console.info = console.warn = console.error;
 
@@ -34,7 +34,7 @@ async function handle(line: string): Promise<void> {
     write({ id, result });
   } catch (e) {
     const code = e instanceof SidecarError ? e.code : 'error';
-    if (!(e instanceof SidecarError)) process.stderr.write(`refs sidecar: ${method}: ${e instanceof Error ? (e.stack ?? e.message) : errorMessage(e)}\n`);
+    if (!(e instanceof SidecarError)) process.stderr.write(`nudge sidecar: ${method}: ${e instanceof Error ? (e.stack ?? e.message) : errorMessage(e)}\n`);
     write({ id, error: { code, message: errorMessage(e) } });
   }
 }

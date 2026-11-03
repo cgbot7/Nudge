@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   DEFAULT_HOTKEY,
   LockBusyError,
-  RefsError,
+  NudgeError,
   approveSheet,
   dataPaths,
   errorMessage,
@@ -30,14 +30,14 @@ import {
   type Config,
   type SearchHit,
   type Sheet,
-} from '@refs/core';
+} from '@nudge/core';
 import { renderMarkdown } from './markdown.ts';
 
 // What the popup asks the sidecar, one JSON line each way:
 //   {"id":1,"method":"search","params":{"q":"docker","mode":"keyword","seq":7}}
 //   {"id":1,"result":{...}}  or  {"id":1,"error":{"code":"busy","message":"..."}}
 // Config, manifest and index are read per request, so the popup never holds index.db open
-// (refs index --rebuild deletes it) and edits to config.json apply right away.
+// (nudge index --rebuild deletes it) and edits to config.json apply right away.
 
 /** Marks around matched words in snippets: private-use characters the popup turns into bold text nodes. */
 export const MARK_OPEN = '\u{E000}';
@@ -138,14 +138,14 @@ async function change<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (e) {
     if (e instanceof LockBusyError) throw new SidecarError('busy', e.message);
-    if (e instanceof RefsError) throw new SidecarError('error', e.message);
+    if (e instanceof NudgeError) throw new SidecarError('error', e.message);
     throw e;
   }
 }
 
 function opener(target: string): void {
   // Tests set this so nothing opens on the machine running them.
-  if (process.env.REFS_SIDECAR_NO_OPEN) return;
+  if (process.env.NUDGE_SIDECAR_NO_OPEN) return;
   openInDefaultApp(target);
 }
 
@@ -186,7 +186,7 @@ export function createHandlers() {
       const proj = project();
       const base = { seq, pass, project: proj } as const;
       if (!q) return { ...base, mode: 'keyword', tookMs: 0, hits: [] };
-      if (!fs.existsSync(dataPaths().db)) return { ...base, mode: 'keyword', notice: 'no index yet; run refs index', tookMs: 0, hits: [] };
+      if (!fs.existsSync(dataPaths().db)) return { ...base, mode: 'keyword', notice: 'no index yet; run nudge index', tookMs: 0, hits: [] };
 
       const sheets = manifestFor(path.join(cfg.library, 'manifest.json'));
       const db = openDb();
@@ -233,7 +233,7 @@ export function createHandlers() {
       const cfg = config();
       const sheet = sheetOrThrow(cfg, params.id);
       const file = sheetAbsPath(cfg.library, sheet);
-      if (!fs.existsSync(file)) throw new SidecarError('not_found', `${sheet.id}: the file is missing from the library (${sheet.file}); run refs doctor`);
+      if (!fs.existsSync(file)) throw new SidecarError('not_found', `${sheet.id}: the file is missing from the library (${sheet.file}); run nudge doctor`);
       let sections;
       try {
         sections = await sheetSections(cfg.library, sheet);

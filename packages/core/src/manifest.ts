@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { RefsError, daysSince, decodeText, errorMessage, writeFileAtomic } from './util.ts';
+import { NudgeError, daysSince, decodeText, errorMessage, writeFileAtomic } from './util.ts';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
@@ -37,7 +37,7 @@ export const OcrInfoSchema = z.object({
 });
 export type OcrInfo = z.infer<typeof OcrInfoSchema>;
 
-/** How an LLM draft was made (source llm). Kept after refs approve as provenance. */
+/** How an LLM draft was made (source llm). Kept after nudge approve as provenance. */
 export const LlmInfoSchema = z.object({
   model: z.string(),
   at: isoDate,
@@ -86,11 +86,11 @@ export function readManifest(library: string): Sheet[] {
   try {
     raw = JSON.parse(decodeText(fs.readFileSync(file)));
   } catch (e) {
-    throw new RefsError(`manifest.json is not valid JSON (${file}): ${errorMessage(e)}`);
+    throw new NudgeError(`manifest.json is not valid JSON (${file}): ${errorMessage(e)}`);
   }
   const parsed = ManifestSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new RefsError(`manifest.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
+    throw new NudgeError(`manifest.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
   }
   return parsed.data;
 }

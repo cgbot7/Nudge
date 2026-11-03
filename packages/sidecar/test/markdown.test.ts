@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { IMAGE_MAX_BYTES, RENDER_MAX_CHARS, renderMarkdown } from '../src/markdown.ts';
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-md-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nudge-md-'));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 const library = path.join(root, 'lib & more');
 const sheets = path.join(library, 'sheets');

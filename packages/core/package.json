@@ -1,5 +1,5 @@
 {
-  "name": "@refs/core",
+  "name": "@nudge/core",
   "version": "0.1.0",
   "private": true,
   "type": "module",

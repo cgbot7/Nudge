@@ -175,7 +175,7 @@ export async function hybridSearch(db: DB, sheets: Sheet[], query: string, opts:
   let vectorKeys: string[] = [];
   const vectorHeadings = new Map<string, string>();
   if (!opts.client) notice = 'Ollama is not configured';
-  else if (!embeddingCoverage(db, opts.embedModel).embedded) notice = `no embeddings from ${opts.embedModel} yet; run refs index`;
+  else if (!embeddingCoverage(db, opts.embedModel).embedded) notice = `no embeddings from ${opts.embedModel} yet; run nudge index`;
   else {
     const health = await opts.client.health();
     if (!health.ok) notice = `Ollama not reachable at ${opts.client.host}`;

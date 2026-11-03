@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { RefsError, decodeText, errorMessage, normalizeTag, writeFileAtomic } from './util.ts';
+import { NudgeError, decodeText, errorMessage, normalizeTag, writeFileAtomic } from './util.ts';
 
 /** Folders a project scan never enters. */
 export const SKIP_DIRS = new Set(['node_modules', '.git', 'venv', '.venv', 'dist', 'build', 'models']);
@@ -112,7 +112,7 @@ function readJson(file: string, label: string): unknown {
   try {
     return JSON.parse(decodeText(fs.readFileSync(file)));
   } catch (e) {
-    throw new RefsError(`${label} is not valid JSON (${file}): ${errorMessage(e)}`);
+    throw new NudgeError(`${label} is not valid JSON (${file}): ${errorMessage(e)}`);
   }
 }
 
@@ -121,7 +121,7 @@ export function readRules(library: string): Rule[] {
   const file = rulesPath(library);
   if (!fs.existsSync(file)) return DEFAULT_RULES;
   const parsed = RulesFileSchema.safeParse(readJson(file, 'rules.json'));
-  if (!parsed.success) throw new RefsError(`rules.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new NudgeError(`rules.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
   return parsed.data;
 }
 
@@ -129,7 +129,7 @@ export function readTagVocab(library: string): TagVocab {
   const file = tagsPath(library);
   if (!fs.existsSync(file)) return DEFAULT_TAGS;
   const parsed = TagVocabSchema.safeParse(readJson(file, 'tags.json'));
-  if (!parsed.success) throw new RefsError(`tags.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new NudgeError(`tags.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
   return parsed.data;
 }
 

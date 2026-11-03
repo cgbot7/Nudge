@@ -2724,7 +2724,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "refs-popup"
+name = "nudge-popup"
 version = "0.1.0"
 dependencies = [
  "serde",

@@ -11,7 +11,7 @@ export interface AiServices {
   downReason?: string;
   /** null while Ollama is down or no visionModel is set. */
   ocr: Ocr | null;
-  /** null while Ollama is down: imports wait in the review queue for a later refs index. */
+  /** null while Ollama is down: imports wait in the review queue for a later nudge index. */
   propose: ProposeFn | null;
 }
 

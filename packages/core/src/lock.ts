@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dataPaths } from './paths.ts';
-import { RefsError, errorCode, sleep } from './util.ts';
+import { NudgeError, errorCode, sleep } from './util.ts';
 
 export interface LockInfo {
   pid: number;
@@ -13,11 +13,11 @@ export interface Lock {
   release(): void;
 }
 
-export class LockBusyError extends RefsError {
+export class LockBusyError extends NudgeError {
   holder: LockInfo | null;
   constructor(holder: LockInfo | null, waitedMs: number) {
     const who = holder ? `process ${holder.pid} since ${holder.at}` : 'another process';
-    super(`refs is busy: the library is locked by ${who} (waited ${Math.round(waitedMs / 1000)}s). Try again shortly.`);
+    super(`nudge is busy: the library is locked by ${who} (waited ${Math.round(waitedMs / 1000)}s). Try again shortly.`);
     this.holder = holder;
   }
 }
@@ -52,7 +52,7 @@ function isStale(file: string): boolean {
 }
 
 /**
- * Single-writer lock on refs.lock. Waits up to `waitMs` (CLI default 10 s),
+ * Single-writer lock on nudge.lock. Waits up to `waitMs` (CLI default 10 s),
  * then throws LockBusyError. A stale lock left by a dead process is taken over.
  */
 export async function acquireLock(opts: { waitMs?: number; command?: string } = {}): Promise<Lock> {

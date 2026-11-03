@@ -16,7 +16,7 @@ import {
   tagResolver,
   type Rule,
 } from '../src/rules.ts';
-import { RefsError } from '../src/util.ts';
+import { NudgeError } from '../src/util.ts';
 import { setupEnv, write, type TestEnv } from './helpers.ts';
 
 let t: TestEnv;
@@ -129,7 +129,7 @@ test('invalid rules.json is reported with the reason', () => {
   fs.mkdirSync(t.library, { recursive: true });
   const bad = (rules: unknown, reason: RegExp) => {
     fs.writeFileSync(rulesPath(t.library), JSON.stringify(rules));
-    assert.throws(() => readRules(t.library), (e: unknown) => e instanceof RefsError && reason.test(e.message));
+    assert.throws(() => readRules(t.library), (e: unknown) => e instanceof NudgeError && reason.test(e.message));
   };
   bad([{ tag: 'x' }], /needs at least one of files, packageDeps, pyDeps/);
   bad([{ tag: 'x', file: ['a'] }], /Unrecognized key/i);

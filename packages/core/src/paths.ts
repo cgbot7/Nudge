@@ -5,16 +5,16 @@ import path from 'node:path';
 // LOCALAPPDATA at temporary folders.
 
 export function configDir(): string {
-  return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'refs');
+  return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'nudge');
 }
 
 export function configPath(): string {
   return path.join(configDir(), 'config.json');
 }
 
-/** %LOCALAPPDATA%\refs: derived data that `refs index --rebuild` can recreate. */
+/** %LOCALAPPDATA%\nudge: derived data that `nudge index --rebuild` can recreate. */
 export function dataDir(): string {
-  return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'refs');
+  return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'nudge');
 }
 
 export function dataPaths() {
@@ -24,18 +24,18 @@ export function dataPaths() {
     db: path.join(dir, 'index.db'),
     extractCache: path.join(dir, 'extract-cache'),
     usage: path.join(dir, 'usage.jsonl'),
-    lock: path.join(dir, 'refs.lock'),
+    lock: path.join(dir, 'nudge.lock'),
     pendingAllow: path.join(dir, 'pending-allow.json'),
     hookCache: path.join(dir, 'hook-cache.json'),
     lastProject: path.join(dir, 'last-project.json'),
-    /** The last refs suggest list, so --save <n> can pick from it without asking the model again. */
+    /** The last nudge suggest list, so --save <n> can pick from it without asking the model again. */
     suggestions: path.join(dir, 'suggestions.json'),
     logs: path.join(dir, 'logs'),
   };
 }
 
 export function defaultLibrary(): string {
-  return path.join(os.homedir(), 'refs-library');
+  return path.join(os.homedir(), 'nudge-library');
 }
 
 /** Absolute, forward slashes, lowercase drive letter. */

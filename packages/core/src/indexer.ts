@@ -20,7 +20,7 @@ import { retagQueued, type RetagReport } from './review.ts';
 import { detectTags, readRules, type Rule } from './rules.ts';
 import { blockingFindings, scanSecrets } from './secrets.ts';
 import { unusedSheets } from './usage.ts';
-import { RefsError, errorMessage, sha256 } from './util.ts';
+import { NudgeError, errorMessage, sha256 } from './util.ts';
 
 export interface IndexReport {
   rebuilt: boolean;
@@ -48,7 +48,7 @@ function deleteIndexDb(): void {
 }
 
 interface IndexLibraryOptions {
-  /** Ignore the extract cache (refs index --rebuild). */
+  /** Ignore the extract cache (nudge index --rebuild). */
   fresh: boolean;
   /** Leave out of this run but keep whatever the index already has for them. */
   keep: Set<string>;
@@ -103,13 +103,13 @@ async function indexLibrary(db: DB, library: string, sheets: Sheet[], skip: Set<
     removed++;
   }
   if (ocrStored.length) {
-    const commit = commitPaths(library, ocrStored, `refs: store OCR text for ${ocrStored.length} sheet${ocrStored.length === 1 ? '' : 's'}`);
+    const commit = commitPaths(library, ocrStored, `nudge: store OCR text for ${ocrStored.length} sheet${ocrStored.length === 1 ? '' : 's'}`);
     if (!commit.ok) warnings.push(`OCR text stored, but the Git commit failed: ${commit.stderr || 'unknown error'}`);
   }
   return { indexed, removed };
 }
 
-/** Scan every discovered project plus any cached project still under a root (added by refs scan). */
+/** Scan every discovered project plus any cached project still under a root (added by nudge scan). */
 function scanAllProjects(config: Config, rules: Rule[], ctx: StatsContext): ProjectEntry[] {
   const paths = discoverProjects(config.roots, rules);
   const keys = new Set(paths.map(pathKey));
@@ -123,7 +123,7 @@ function scanAllProjects(config: Config, rules: Rule[], ctx: StatsContext): Proj
 }
 
 /**
- * refs index: sync the library, update the index, scan projects, write the hook cache.
+ * nudge index: sync the library, update the index, scan projects, write the hook cache.
  * A scheduled run returns null at once if another writer holds the lock; an
  * interactive one waits up to 10 s.
  */
@@ -191,16 +191,16 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
 
 function projectRootOrThrow(config: Config, dir: string, rules: Rule[]): string {
   const abs = path.resolve(dir);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new RefsError(`not a folder: ${abs}`);
-  if (!config.roots.length) throw new RefsError('no roots registered. Add your project folders to "roots" in config.json.');
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new NudgeError(`not a folder: ${abs}`);
+  if (!config.roots.length) throw new NudgeError('no roots registered. Add your project folders to "roots" in config.json.');
   const root = rootFor(abs, config.roots);
-  if (!root) throw new RefsError(`${normPath(abs)} is not under a registered root (${config.roots.join(', ')}).`);
+  if (!root) throw new NudgeError(`${normPath(abs)} is not under a registered root (${config.roots.join(', ')}).`);
   const project = resolveProjectRoot(abs, config.roots, rules);
-  if (!project) throw new RefsError(`${normPath(abs)} is a registered root itself; scan a project folder inside it.`);
+  if (!project) throw new NudgeError(`${normPath(abs)} is a registered root itself; scan a project folder inside it.`);
   return project;
 }
 
-/** refs scan: re-detect one project and rewrite its hook cache entry. */
+/** nudge scan: re-detect one project and rewrite its hook cache entry. */
 export async function scanProject(config: Config, dir: string): Promise<ProjectEntry> {
   return withLock('scan', () => {
     const rules = readRules(config.library);
@@ -239,7 +239,7 @@ export function looksLikePath(target: string): boolean {
   return target === '.' || target === '..' || /[\\/:]/.test(target);
 }
 
-/** refs for <path | "tag tag">: sheets grouped by tag, gaps and unused reminders. Read-only. */
+/** nudge for <path | "tag tag">: sheets grouped by tag, gaps and unused reminders. Read-only. */
 export function forTarget(config: Config, target: string): ForReport {
   const ctx = statsContext(config);
   const rules = readRules(config.library);
@@ -248,7 +248,7 @@ export function forTarget(config: Config, target: string): ForReport {
   let truncated = false;
   if (looksLikePath(target)) {
     const abs = path.resolve(target);
-    if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new RefsError(`not a folder: ${abs}`);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new NudgeError(`not a folder: ${abs}`);
     project = resolveProjectRoot(abs, config.roots, rules) ?? normPath(abs);
     const detection = detectTags(project, rules);
     tags = detection.tags;

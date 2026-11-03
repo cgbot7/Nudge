@@ -37,7 +37,7 @@ export interface HookCache {
   projects: ProjectEntry[];
 }
 
-export const NO_TAGS_LINE = 'refs: no tags (add a rule to rules.json)';
+export const NO_TAGS_LINE = 'nudge: no tags (add a rule to rules.json)';
 
 export interface StatsContext {
   sheets: Sheet[];
@@ -69,7 +69,7 @@ export function matchSheets(tags: string[], ctx: StatsContext): Sheet[] {
 
 export function headLine(tags: string[], sheets: number, stale: number, gaps: string[]): string {
   if (!tags.length) return NO_TAGS_LINE;
-  let line = `refs [${tags.join(', ')}] ${sheets} sheet${sheets === 1 ? '' : 's'}`;
+  let line = `nudge [${tags.join(', ')}] ${sheets} sheet${sheets === 1 ? '' : 's'}`;
   if (stale) line += ` (${stale} stale)`;
   if (gaps.length) line += ` | gap: ${gaps.join(', ')}`;
   return line;
@@ -91,7 +91,7 @@ export function buildEntry(project: string, detection: { tags: string[]; truncat
     unused,
     try: unused.map((u) => u.title),
     head: headLine(tags, matched.length, stale, gaps),
-    tail: tags.length ? ' | refs for .' : '',
+    tail: tags.length ? ' | nudge for .' : '',
     truncated: detection.truncated,
     scannedAt,
   };
@@ -189,7 +189,7 @@ export function refreshHookCache(config: Config, now = new Date()): HookCache | 
   return fresh;
 }
 
-/** Best-effort refresh for read-mostly commands (refs open): skipped if another writer holds the lock. */
+/** Best-effort refresh for read-mostly commands (nudge open): skipped if another writer holds the lock. */
 export async function tryRefreshHookCache(config: Config): Promise<void> {
   let lock;
   try {
@@ -200,7 +200,7 @@ export async function tryRefreshHookCache(config: Config): Promise<void> {
   try {
     refreshHookCache(config);
   } catch {
-    // The next refs index rewrites the cache anyway.
+    // The next nudge index rewrites the cache anyway.
   } finally {
     lock.release();
   }

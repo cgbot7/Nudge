@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { configPath, defaultLibrary } from './paths.ts';
-import { RefsError, decodeText, errorMessage, writeFileAtomic } from './util.ts';
+import { NudgeError, decodeText, errorMessage, writeFileAtomic } from './util.ts';
 
 const OllamaSchema = z.object({
   host: z.url().default('http://localhost:11434'),
@@ -45,11 +45,11 @@ export function loadConfig(): LoadedConfig {
   try {
     raw = JSON.parse(decodeText(fs.readFileSync(file)));
   } catch (e) {
-    throw new RefsError(`config.json is not valid JSON (${file}): ${errorMessage(e)}`);
+    throw new NudgeError(`config.json is not valid JSON (${file}): ${errorMessage(e)}`);
   }
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new RefsError(`config.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
+    throw new NudgeError(`config.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
   }
   return { config: resolveLibrary(parsed.data), path: file, exists: true };
 }

@@ -8,7 +8,7 @@ import { manifestPath, writeManifest, type Sheet } from './manifest.ts';
 import { dataPaths, pathKey } from './paths.ts';
 import { seedRuleFiles } from './rules.ts';
 import { blockingFindings, scanSecrets, type Finding } from './secrets.ts';
-import { RefsError, errorMessage, sha256, today, writeFileAtomic } from './util.ts';
+import { NudgeError, errorMessage, sha256, today, writeFileAtomic } from './util.ts';
 
 export const LIBRARY_GITIGNORE = 'inbox/\n';
 // Git must never rewrite line endings in sheets, or their SHA256 stops matching the manifest.
@@ -32,18 +32,18 @@ export function ensureLibrary(library: string): string[] {
 
   if (!isRepoRoot(library)) {
     const init = git(library, ['init', '--quiet', '-b', 'main']);
-    if (!init.available) throw new RefsError('git is not installed or not on PATH; the library must be a Git repo.');
-    if (!init.ok) throw new RefsError(`git init failed in ${library}: ${init.stderr}`);
-    const commit = commitPaths(library, ['.gitignore', '.gitattributes', 'manifest.json', ...seeded], 'refs: create library');
+    if (!init.available) throw new NudgeError('git is not installed or not on PATH; the library must be a Git repo.');
+    if (!init.ok) throw new NudgeError(`git init failed in ${library}: ${init.stderr}`);
+    const commit = commitPaths(library, ['.gitignore', '.gitattributes', 'manifest.json', ...seeded], 'nudge: create library');
     notes.push(commit.ok ? 'initialized library Git repo' : `initialized library Git repo (first commit failed: ${commit.stderr})`);
   } else if (seeded.length) {
-    const commit = commitPaths(library, seeded, `refs: add default ${seeded.join(' and ')}`);
+    const commit = commitPaths(library, seeded, `nudge: add default ${seeded.join(' and ')}`);
     notes.push(`added default ${seeded.join(' and ')} to the library${commit.ok ? '' : ` (commit failed: ${commit.stderr})`}`);
   }
   return notes;
 }
 
-/** Drop folder processed by refs index; listed in the library's .gitignore. */
+/** Drop folder processed by nudge index; listed in the library's .gitignore. */
 export function inboxDir(library: string): string {
   return path.join(library, 'inbox');
 }
@@ -62,7 +62,7 @@ export function writeExtractCache(sha: string, text: string): void {
 }
 
 // OCR text is kept in the library (ocr\<sha256>.txt, committed with the sheet), because
-// OCR is slow, needs Ollama and is not deterministic. refs index --rebuild reads it back
+// OCR is slow, needs Ollama and is not deterministic. nudge index --rebuild reads it back
 // instead of running the vision model again. Only text that passed the secret scan goes there.
 
 export function ocrTextRel(sha: string): string {
@@ -91,7 +91,7 @@ export interface ExtractCachedOptions {
 
 /**
  * Extracted text for a library file, cached by content hash in extract-cache\<sha256>.txt.
- * `fresh` ignores the cache and extracts from the file again (refs index --rebuild), but
+ * `fresh` ignores the cache and extracts from the file again (nudge index --rebuild), but
  * OCR text stored in the library is still used. Text from a new OCR run is returned with
  * `ocr` set and not cached: the caller secret-scans it first.
  */
@@ -111,7 +111,7 @@ export async function extractCached(format: Sheet['format'], buf: Buffer, sha = 
 /** Sections of a sheet as they are on disk now. */
 export async function sheetSections(library: string, sheet: Sheet): Promise<Section[]> {
   const file = sheetAbsPath(library, sheet);
-  if (!fs.existsSync(file)) throw new RefsError(`${sheet.id}: file is missing from the library (${sheet.file}). Run refs doctor.`);
+  if (!fs.existsSync(file)) throw new NudgeError(`${sheet.id}: file is missing from the library (${sheet.file}). Run nudge doctor.`);
   const buf = fs.readFileSync(file);
   const { text } = await extractCached(sheet.format, buf, sha256(buf), false, { library });
   return chunkExtracted(sheet.format, text);
@@ -142,7 +142,7 @@ export interface SyncReport {
   edited: string[];
   /** Matched to an unknown file with the same hash. */
   renamed: { id: string; from: string; to: string }[];
-  /** Still missing after rename matching. Never removed from the manifest; refs doctor reports them. */
+  /** Still missing after rename matching. Never removed from the manifest; nudge doctor reports them. */
   missing: string[];
   /** Edited, but the new text has likely secrets: not accepted until redacted or allowlisted. */
   blocked: { id: string; file: string; findings: Finding[] }[];
@@ -230,7 +230,7 @@ export async function syncLibrary(library: string, sheets: Sheet[], opts: { extr
       ...report.renamed.flatMap((r) => (tracked(r.from) ? [r.from, r.to] : [r.to])),
     ];
     const parts = [report.edited.length && `${report.edited.length} edited`, report.renamed.length && `${report.renamed.length} renamed`].filter(Boolean);
-    const commit = commitPaths(library, [...new Set(paths)], `refs: sync library (${parts.join(', ')})`);
+    const commit = commitPaths(library, [...new Set(paths)], `nudge: sync library (${parts.join(', ')})`);
     if (!commit.ok) report.commitError = commit.stderr || 'unknown error';
   }
   return report;

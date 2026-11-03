@@ -23,33 +23,33 @@ let t: TestEnv;
 let docs: string;
 beforeEach(() => {
   t = setupEnv();
-  docs = t.env.REFS_DOCUMENTS_DIR!;
+  docs = t.env.NUDGE_DOCUMENTS_DIR!;
 });
 
 const profile51 = () => path.join(docs, 'WindowsPowerShell', 'profile.ps1');
 const profile7 = () => path.join(docs, 'PowerShell', 'profile.ps1');
 
 test('the profile block is appended once, kept current, and leaves the rest alone', () => {
-  const hook = 'C:\\Tools & Stuff\\it\'s\\refs-hook.ps1';
+  const hook = 'C:\\Tools & Stuff\\it\'s\\nudge-hook.ps1';
   const original = 'Set-Alias ll Get-ChildItem\r\n';
   const first = upsertHookBlock(original, hook);
   assert.equal(first.action, 'append');
   assert.ok(first.content.startsWith(original));
-  assert.match(first.content, /\. 'C:\\Tools & Stuff\\it''s\\refs-hook\.ps1'/, 'single quotes are doubled');
+  assert.match(first.content, /\. 'C:\\Tools & Stuff\\it''s\\nudge-hook\.ps1'/, 'single quotes are doubled');
   assert.equal(upsertHookBlock(first.content, hook).action, 'none');
 
-  const moved = upsertHookBlock(first.content + 'Write-Host after\r\n', 'D:\\refs\\shell\\refs-hook.ps1');
+  const moved = upsertHookBlock(first.content + 'Write-Host after\r\n', 'D:\\nudge\\shell\\nudge-hook.ps1');
   assert.equal(moved.action, 'update');
   assert.ok(moved.content.startsWith(original) && moved.content.endsWith('Write-Host after\r\n'));
   assert.equal(moved.content.split(HOOK_BEGIN).length, 2, 'exactly one block');
-  assert.ok(moved.content.includes('D:\\refs\\shell\\refs-hook.ps1') && !moved.content.includes('Tools & Stuff'));
+  assert.ok(moved.content.includes('D:\\nudge\\shell\\nudge-hook.ps1') && !moved.content.includes('Tools & Stuff'));
   assert.equal(upsertHookBlock('', hook).content, hookBlock(hook) + '\r\n');
 });
 
 test('PATH entry is added once, ignoring case and trailing slashes', () => {
-  assert.equal(addPathEntry('C:\\a;C:\\b;', 'C:\\Refs\\bin'), 'C:\\a;C:\\b;C:\\Refs\\bin');
-  assert.equal(addPathEntry('C:\\a;c:\\refs\\BIN\\', 'C:\\Refs\\bin'), null);
-  assert.equal(addPathEntry('', 'C:\\Refs\\bin'), 'C:\\Refs\\bin');
+  assert.equal(addPathEntry('C:\\a;C:\\b;', 'C:\\Nudge\\bin'), 'C:\\a;C:\\b;C:\\Nudge\\bin');
+  assert.equal(addPathEntry('C:\\a;c:\\nudge\\BIN\\', 'C:\\Nudge\\bin'), null);
+  assert.equal(addPathEntry('', 'C:\\Nudge\\bin'), 'C:\\Nudge\\bin');
 });
 
 test('task XML: logon trigger repeating every 30 minutes, hidden through conhost, escaped paths', () => {
@@ -89,8 +89,8 @@ test('install plans, applies and is idempotent; existing profiles are backed up 
   assert.ok(new7.toString('utf8').includes(HOOK_END));
   const updated51 = fs.readFileSync(profile51());
   assert.deepEqual([...updated51.subarray(0, 2)], [0xff, 0xfe], 'UTF-16 profile stays UTF-16');
-  assert.match(updated51.subarray(2).toString('utf16le'), /^# mine\r\n\r\n# >>> refs hook/);
-  assert.deepEqual(fs.readFileSync(`${profile51()}.refs-backup`), utf16);
+  assert.match(updated51.subarray(2).toString('utf16le'), /^# mine\r\n\r\n# >>> nudge hook/);
+  assert.deepEqual(fs.readFileSync(`${profile51()}.nudge-backup`), utf16);
   assert.equal(calls.createTask.length, 1);
   assert.equal(calls.writeUserPath.length, 1);
 
@@ -117,7 +117,7 @@ test('doctor reports hook and schedule state', async () => {
   assert.equal((await find('hook'))?.status, 'ok');
   assert.equal((await find('schedule'))?.status, 'ok');
 
-  fs.mkdirSync(path.join(t.env.LOCALAPPDATA!, 'refs'), { recursive: true });
-  fs.writeFileSync(path.join(t.env.LOCALAPPDATA!, 'refs', 'hook-cache.json'), '{not json');
+  fs.mkdirSync(path.join(t.env.LOCALAPPDATA!, 'nudge'), { recursive: true });
+  fs.writeFileSync(path.join(t.env.LOCALAPPDATA!, 'nudge', 'hook-cache.json'), '{not json');
   assert.equal((await find('cache'))?.status, 'fail');
 });

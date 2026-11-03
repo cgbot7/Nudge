@@ -3,10 +3,10 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { Sheet } from './manifest.ts';
 import { pathKey } from './paths.ts';
-import { RefsError, decodeText, errorMessage, normalizeTag, writeFileAtomic } from './util.ts';
+import { NudgeError, decodeText, errorMessage, normalizeTag, writeFileAtomic } from './util.ts';
 
 // gap-ignores.json lives in the library: it is your intent, not derived data, so it
-// survives deleting %LOCALAPPDATA%\refs and syncs with the library repo.
+// survives deleting %LOCALAPPDATA%\nudge and syncs with the library repo.
 
 const GapIgnoresSchema = z.object({
   global: z.array(z.string()).default([]),
@@ -26,10 +26,10 @@ export function readGapIgnores(library: string): GapIgnores {
   try {
     raw = JSON.parse(decodeText(fs.readFileSync(file)));
   } catch (e) {
-    throw new RefsError(`gap-ignores.json is not valid JSON (${file}): ${errorMessage(e)}`);
+    throw new NudgeError(`gap-ignores.json is not valid JSON (${file}): ${errorMessage(e)}`);
   }
   const parsed = GapIgnoresSchema.safeParse(raw);
-  if (!parsed.success) throw new RefsError(`gap-ignores.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) throw new NudgeError(`gap-ignores.json is invalid (${file}):\n${z.prettifyError(parsed.error)}`);
   return parsed.data;
 }
 

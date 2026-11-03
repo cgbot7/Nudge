@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /** An expected failure with a message meant for the user (no stack trace). */
-export class RefsError extends Error {
+export class NudgeError extends Error {
   exitCode: number;
   constructor(message: string, exitCode = 1) {
     super(message);
-    this.name = 'RefsError';
+    this.name = 'NudgeError';
     this.exitCode = exitCode;
   }
 }

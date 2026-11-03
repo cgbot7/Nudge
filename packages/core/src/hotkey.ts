@@ -1,6 +1,6 @@
 // The popup's global hotkey (config.json "hotkey"). The popup registers it through Tauri's
 // global shortcut plugin, which parses with the global-hotkey crate (0.8). This mirrors that
-// parser, so refs doctor and the sidecar can say what is wrong before the popup tries it,
+// parser, so nudge doctor and the sidecar can say what is wrong before the popup tries it,
 // and turns the string into one canonical spelling that the crate also accepts.
 
 const MODIFIERS: Record<string, 'Ctrl' | 'Alt' | 'Shift' | 'Super'> = {
