@@ -1,14 +1,14 @@
 {
-  "name": "@refs/mcp",
+  "name": "@nudge/mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "refs-mcp": "src/server.ts"
+    "nudge-mcp": "src/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.1",
-    "@refs/core": "0.1.0",
+    "@nudge/core": "0.1.0",
     "zod": "^4.6.7"
   }
 }

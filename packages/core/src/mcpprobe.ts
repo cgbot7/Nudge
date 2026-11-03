@@ -11,7 +11,7 @@ export interface ProbeResult {
 
 /**
  * Start an MCP server over stdio, do the initialize handshake and list its tools, the way
- * an agent would at session start. A few JSON-RPC lines, so refs doctor needs no MCP client.
+ * an agent would at session start. A few JSON-RPC lines, so nudge doctor needs no MCP client.
  */
 export function probeMcpServer(command: string, args: string[], opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<ProbeResult> {
   const started = performance.now();
@@ -59,6 +59,6 @@ export function probeMcpServer(command: string, args: string[], opts: { timeoutM
         }
       }
     });
-    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'refs-doctor', version: '0.1.0' } } });
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'nudge-doctor', version: '0.1.0' } } });
   });
 }

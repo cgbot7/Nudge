@@ -1,14 +1,14 @@
 import type { Config } from './config.ts';
-import { RefsError, errorMessage } from './util.ts';
+import { NudgeError, errorMessage } from './util.ts';
 
-// The only network client in refs. It talks to config.ollama.host, and for chat to
+// The only network client in nudge. It talks to config.ollama.host, and for chat to
 // config.ollama.chatHost when one is set (a relay); nothing else.
 
 export type OllamaConfig = Config['ollama'];
 
 export type OllamaErrorKind = 'unreachable' | 'timeout' | 'model-missing' | 'http' | 'bad-response';
 
-export class OllamaError extends RefsError {
+export class OllamaError extends NudgeError {
   kind: OllamaErrorKind;
   constructor(kind: OllamaErrorKind, message: string) {
     super(message);

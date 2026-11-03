@@ -10,7 +10,7 @@ import { acquireLock, LockBusyError } from '../src/lock.ts';
 import { readManifest } from '../src/manifest.ts';
 import { dataPaths } from '../src/paths.ts';
 import { keywordSearch, type SearchHit } from '../src/search.ts';
-import { RefsError, sha256 } from '../src/util.ts';
+import { NudgeError, sha256 } from '../src/util.ts';
 import { DOCKER_MD, FAKE_GITHUB_TOKEN, makeDocx, makePdf, setupEnv, write, type TestEnv } from './helpers.ts';
 
 let t: TestEnv;
@@ -47,7 +47,7 @@ test('imports Markdown: moves the file, records it, indexes sections and commits
   assert.equal(r.sections, 4);
   assert.equal(fs.readFileSync(path.join(t.library, 'sheets', 's_0001-docker-basics.md'), 'utf8'), DOCKER_MD);
   assert.deepEqual(readManifest(t.library).map((s) => s.id), ['s_0001']);
-  assert.match(gitLog(), /refs: add s_0001 Docker basics/);
+  assert.match(gitLog(), /nudge: add s_0001 Docker basics/);
   assert.equal(execFileSync('git', ['-C', t.library, 'status', '--porcelain'], { encoding: 'utf8' }), '');
   assert.equal(fs.readFileSync(path.join(t.library, '.gitattributes'), 'utf8'), '* -text\n');
   assert.ok(fs.existsSync(path.join(dataPaths().extractCache, `${r.sheet.sha256}.txt`)));
@@ -179,7 +179,7 @@ test('cross-drive moves copy, verify the hash, then delete the original', () => 
   assert.ok(fs.existsSync(kept));
   assert.equal(fs.readFileSync(path.join(t.root, 'dest', 'kept.md'), 'utf8'), 'keep me');
 
-  assert.throws(() => moveFile(write(t.work, 'bad.md', 'abc'), path.join(t.root, 'dest', 'bad.md'), sha256('other'), exdev), RefsError);
+  assert.throws(() => moveFile(write(t.work, 'bad.md', 'abc'), path.join(t.root, 'dest', 'bad.md'), sha256('other'), exdev), NudgeError);
   assert.ok(fs.existsSync(path.join(t.work, 'bad.md')), 'unverified copy leaves the original');
   assert.equal(fs.existsSync(path.join(t.root, 'dest', 'bad.md')), false);
 });

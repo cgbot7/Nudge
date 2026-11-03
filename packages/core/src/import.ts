@@ -11,7 +11,7 @@ import { findBySha, nextId, readManifest, writeManifest, type AllowEntry, type P
 import { dataPaths, isInside, normPath, pathKey } from './paths.ts';
 import { blockingFindings, scanSecrets, type Finding } from './secrets.ts';
 import {
-  RefsError,
+  NudgeError,
   errorCode,
   errorMessage,
   normalizeTag,
@@ -62,17 +62,17 @@ interface Prepared {
 function prepare(library: string, file: string, opts: AddOptions): Prepared {
   const abs = path.resolve(file);
   const base = path.basename(abs);
-  if (/^~\$/.test(base)) throw new RefsError(`${base} is an Office lock file; ignored.`);
+  if (/^~\$/.test(base)) throw new NudgeError(`${base} is an Office lock file; ignored.`);
   let stat: fs.Stats;
   try {
     stat = fs.statSync(abs);
   } catch {
-    throw new RefsError(`file not found: ${abs}`);
+    throw new NudgeError(`file not found: ${abs}`);
   }
-  if (!stat.isFile()) throw new RefsError(`not a file: ${abs}`);
-  if (isInside(abs, library) && !(opts.fromInbox && isInside(abs, inboxDir(library)))) throw new RefsError(`${abs} is already inside the library.`);
+  if (!stat.isFile()) throw new NudgeError(`not a file: ${abs}`);
+  if (isInside(abs, library) && !(opts.fromInbox && isInside(abs, inboxDir(library)))) throw new NudgeError(`${abs} is already inside the library.`);
   const format = formatFromPath(abs);
-  if (!format) throw new RefsError(`unsupported file type "${path.extname(abs)}". Supported: .md, .markdown, .txt, .docx, .pdf, .png, .jpg, .jpeg`);
+  if (!format) throw new NudgeError(`unsupported file type "${path.extname(abs)}". Supported: .md, .markdown, .txt, .docx, .pdf, .png, .jpg, .jpeg`);
 
   const warnings: string[] = [];
   if (stat.size > LARGE_FILE_BYTES) {
@@ -87,7 +87,7 @@ export async function addFile(library: string, file: string, opts: AddOptions = 
   return withLock('add', () => importPrepared(library, prepared, opts));
 }
 
-/** addFile for a caller that already holds the refs.lock (refs index processing the inbox). */
+/** addFile for a caller that already holds the nudge.lock (nudge index processing the inbox). */
 export async function importLocked(library: string, file: string, opts: AddOptions = {}): Promise<AddResult> {
   return importPrepared(library, prepare(library, file, opts), opts);
 }
@@ -109,13 +109,13 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
   if (blockingFindings(findings).length) return { kind: 'blocked', file: abs, format, findings };
 
   const sections = chunkExtracted(format, extracted.text);
-  if (!sections.length) throw new RefsError(`no text found in ${base}; nothing to index.`);
+  if (!sections.length) throw new NudgeError(`no text found in ${base}; nothing to index.`);
 
   const repo = trackingRepo(abs);
   if (repo && !opts.yes) {
     const question = `${base} is tracked by the Git repo at ${repo}; moving it shows as a deletion there. Move it anyway?`;
-    if (!opts.confirm) throw new RefsError(`${question.replace(' Move it anyway?', '')} Re-run with --yes to move it.`);
-    if (!(await opts.confirm(question))) throw new RefsError('cancelled; nothing changed.');
+    if (!opts.confirm) throw new NudgeError(`${question.replace(' Move it anyway?', '')} Re-run with --yes to move it.`);
+    if (!(await opts.confirm(question))) throw new NudgeError('cancelled; nothing changed.');
   }
   assertNotLocked(abs);
 
@@ -164,7 +164,7 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
   } catch (e) {
     if (!moved.keptOriginal) restoreMove(dest, abs);
     if (ocrRel) fs.rmSync(path.join(library, ...ocrRel.split('/')), { force: true });
-    throw new RefsError(`could not write manifest.json (${errorMessage(e)}); the file was put back.`);
+    throw new NudgeError(`could not write manifest.json (${errorMessage(e)}); the file was put back.`);
   }
   clearPendingAllow(abs);
 
@@ -179,7 +179,7 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
     warnings.push(`imported, but indexing failed: ${errorMessage(e)}`);
   }
 
-  const commit = commitPaths(library, ['manifest.json', rel, ...(ocrRel ? [ocrRel] : [])], `refs: add ${id} ${title}`);
+  const commit = commitPaths(library, ['manifest.json', rel, ...(ocrRel ? [ocrRel] : [])], `nudge: add ${id} ${title}`);
   if (!commit.ok) warnings.push(`imported, but the Git commit failed: ${commit.stderr || 'unknown error'}`);
 
   return { kind: 'added', sheet, sections: sections.length, notes, warnings, queued };
@@ -192,7 +192,7 @@ function assertNotLocked(file: string): void {
   } catch (e) {
     const code = errorCode(e);
     if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
-      throw new RefsError(`${path.basename(file)} is locked or read-only (open in another program?). Close it and try again; it was left in place.`);
+      throw new NudgeError(`${path.basename(file)} is locked or read-only (open in another program?). Close it and try again; it was left in place.`);
     }
     throw e;
   }
@@ -210,21 +210,21 @@ export interface MoveResult {
 export function moveFile(src: string, dest: string, expectedSha: string, ops: FsOps = {}): MoveResult {
   const { rename = fs.renameSync, unlink = fs.unlinkSync } = ops;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  if (fs.existsSync(dest)) throw new RefsError(`refusing to overwrite ${dest}`);
+  if (fs.existsSync(dest)) throw new NudgeError(`refusing to overwrite ${dest}`);
   try {
     rename(src, dest);
     return { keptOriginal: false };
   } catch (e) {
     const code = errorCode(e);
     if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
-      throw new RefsError(`could not move ${path.basename(src)} (${code}: locked or in use?); it was left in place.`);
+      throw new NudgeError(`could not move ${path.basename(src)} (${code}: locked or in use?); it was left in place.`);
     }
     if (code !== 'EXDEV') throw e;
   }
   fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
   if (sha256File(dest) !== expectedSha) {
     fs.rmSync(dest, { force: true });
-    throw new RefsError(`copy of ${path.basename(src)} did not verify (hash mismatch); the original was left in place.`);
+    throw new NudgeError(`copy of ${path.basename(src)} did not verify (hash mismatch); the original was left in place.`);
   }
   try {
     unlink(src);
@@ -276,14 +276,14 @@ export interface AllowResult {
 /** Allowlist finding `n` (as numbered by the scan) for a file, storing only its fingerprint. */
 export async function allowFinding(library: string, file: string, n: number, extractOpts: ExtractOptions = {}): Promise<AllowResult> {
   const abs = path.resolve(file);
-  if (!fs.existsSync(abs)) throw new RefsError(`file not found: ${abs}`);
+  if (!fs.existsSync(abs)) throw new NudgeError(`file not found: ${abs}`);
   const format = formatFromPath(abs);
-  if (!format) throw new RefsError(`unsupported file type "${path.extname(abs)}".`);
+  if (!format) throw new NudgeError(`unsupported file type "${path.extname(abs)}".`);
   const { text } = await extract(format, fs.readFileSync(abs), extractOpts);
   const findings = scanSecrets(text);
   const finding = findings.find((f) => f.n === n);
   if (!finding) {
-    throw new RefsError(findings.length ? `no finding ${n}; this file has findings 1 to ${findings.length}.` : 'no secret-scan findings in this file.');
+    throw new NudgeError(findings.length ? `no finding ${n}; this file has findings 1 to ${findings.length}.` : 'no secret-scan findings in this file.');
   }
   const entry: AllowEntry = { rule: finding.rule, fingerprint: finding.fingerprint };
 
@@ -291,10 +291,10 @@ export async function allowFinding(library: string, file: string, n: number, ext
     if (isInside(abs, library)) {
       const sheets = readManifest(library);
       const sheet = sheets.find((s) => pathKey(path.join(library, s.file)) === pathKey(abs));
-      if (!sheet) throw new RefsError(`${abs} is inside the library but not in manifest.json.`);
+      if (!sheet) throw new NudgeError(`${abs} is inside the library but not in manifest.json.`);
       if (!sheet.secretAllowlist.some((a) => a.fingerprint === entry.fingerprint)) sheet.secretAllowlist.push(entry);
       writeManifest(library, sheets);
-      commitPaths(library, ['manifest.json'], `refs: allowlist ${finding.rule} finding in ${sheet.id}`);
+      commitPaths(library, ['manifest.json'], `nudge: allowlist ${finding.rule} finding in ${sheet.id}`);
       return { finding, sheetId: sheet.id };
     }
     const all = readPendingAllow();

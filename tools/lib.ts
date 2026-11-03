@@ -20,7 +20,7 @@ export interface Sandbox {
 
 /** The ollama block of the real config.json, read before the sandbox replaces APPDATA. */
 export function realOllamaConfig(): Record<string, unknown> {
-  const file = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'refs', 'config.json');
+  const file = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'nudge', 'config.json');
   try {
     const c = JSON.parse(fs.readFileSync(file, 'utf8')) as { ollama?: Record<string, unknown> };
     return c.ollama ?? {};
@@ -35,7 +35,7 @@ export function realOllamaConfig(): Record<string, unknown> {
  * The folder is removed on exit unless `keep` is set.
  */
 export function makeSandbox(name: string, config: Record<string, unknown>, opts: { keep?: boolean } = {}): Sandbox {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `refs-${name}-`));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `nudge-${name}-`));
   if (!opts.keep) process.on('exit', () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 }));
   const library = path.join(root, 'library');
   const work = path.join(root, 'work');
@@ -45,22 +45,22 @@ export function makeSandbox(name: string, config: Record<string, unknown>, opts:
   const env: NodeJS.ProcessEnv = {
     APPDATA: path.join(root, 'appdata'),
     LOCALAPPDATA: path.join(root, 'localappdata'),
-    GIT_AUTHOR_NAME: 'refs bench',
-    GIT_AUTHOR_EMAIL: 'refs-bench@localhost',
-    GIT_COMMITTER_NAME: 'refs bench',
-    GIT_COMMITTER_EMAIL: 'refs-bench@localhost',
+    GIT_AUTHOR_NAME: 'nudge bench',
+    GIT_AUTHOR_EMAIL: 'nudge-bench@localhost',
+    GIT_COMMITTER_NAME: 'nudge bench',
+    GIT_COMMITTER_EMAIL: 'nudge-bench@localhost',
     NO_COLOR: '1',
     // Same overrides as the tests: nothing touches the real profiles, task, agents or Run key.
-    REFS_DOCUMENTS_DIR: path.join(root, 'documents'),
-    REFS_TASK_NAME: `refs-${name}-${path.basename(root)}`,
-    REFS_HOME_DIR: path.join(root, 'home'),
-    REFS_RUN_KEY: `HKCU\\Software\\refs-${name}\\${path.basename(root)}`,
-    REFS_RUN_VALUE_NAME: `refs popup ${name}`,
+    NUDGE_DOCUMENTS_DIR: path.join(root, 'documents'),
+    NUDGE_TASK_NAME: `nudge-${name}-${path.basename(root)}`,
+    NUDGE_HOME_DIR: path.join(root, 'home'),
+    NUDGE_RUN_KEY: `HKCU\\Software\\nudge-${name}\\${path.basename(root)}`,
+    NUDGE_RUN_VALUE_NAME: `nudge popup ${name}`,
   };
   Object.assign(process.env, env);
-  fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
+  fs.mkdirSync(path.join(env.APPDATA!, 'nudge'), { recursive: true });
   const full = { library: slash(library), roots: [slash(projects)], ...config };
-  fs.writeFileSync(path.join(env.APPDATA!, 'refs', 'config.json'), JSON.stringify(full, null, 2));
+  fs.writeFileSync(path.join(env.APPDATA!, 'nudge', 'config.json'), JSON.stringify(full, null, 2));
   return { root, library, work, projects, env: { ...process.env, ...env } };
 }
 

@@ -1,5 +1,5 @@
 import { isOllamaDown, type OllamaClient } from '../ollama.ts';
-import { RefsError, errorMessage } from '../util.ts';
+import { NudgeError, errorMessage } from '../util.ts';
 
 /** OCR through the vision model. The reply is stored as text and never acted on. */
 export interface Ocr {
@@ -8,7 +8,7 @@ export interface Ocr {
 }
 
 /** Thrown when text can only come from OCR and OCR is not available now; nothing was changed. */
-export class OcrUnavailableError extends RefsError {}
+export class OcrUnavailableError extends NudgeError {}
 
 const OCR_PROMPT =
   'Transcribe all text in this image exactly as it appears, keeping line breaks, commands, code and punctuation. ' +

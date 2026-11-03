@@ -68,7 +68,7 @@ test('an edited sheet is re-extracted and re-indexed; lastVerified and status ar
   assert.equal(after.lastVerified, '2026-01-02');
   assert.equal(after.status, 'verified');
   assert.equal(search('bridge network')[0]?.heading, 'Networks');
-  assert.match(git('log', '-1', '--format=%s'), /refs: sync library \(1 edited\)/);
+  assert.match(git('log', '-1', '--format=%s'), /nudge: sync library \(1 edited\)/);
   assert.equal(git('status', '--porcelain'), '');
 
   const again = await runIndex(config);
@@ -99,7 +99,7 @@ test('a missing sheet stays in the manifest, leaves the index, and doctor report
   assert.equal(readManifest(t.library).length, 1, 'never silently removed');
   assert.deepEqual(search('stopped containers'), []);
 
-  const checks = await runDoctor(fakeSystem(t.env.REFS_DOCUMENTS_DIR!).sys);
+  const checks = await runDoctor(fakeSystem(t.env.NUDGE_DOCUMENTS_DIR!).sys);
   assert.ok(checks.some((c) => c.status === 'fail' && c.name === 'files' && /missing from the library: s_0001/.test(c.detail)));
   assert.ok(checks.some((c) => c.status === 'warn' && c.name === 'files' && /unrelated\.md/.test(c.detail)));
 });

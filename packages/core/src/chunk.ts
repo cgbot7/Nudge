@@ -2,7 +2,7 @@ import { PAGE_BREAK } from './extract/index.ts';
 import type { SheetFormat } from './manifest.ts';
 
 export interface Section {
-  /** 1-based, used by `refs open <id> --section <n>`. */
+  /** 1-based, used by `nudge open <id> --section <n>`. */
   idx: number;
   heading: string;
   /** Full section text, including its heading line. */

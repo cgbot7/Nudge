@@ -1,5 +1,5 @@
-// refs popup: tray icon, global hotkey and a window kept hidden and pre-rendered, so the
-// hotkey only has to show it. All library logic lives in the Node sidecar (@refs/core);
+// nudge popup: tray icon, global hotkey and a window kept hidden and pre-rendered, so the
+// hotkey only has to show it. All library logic lives in the Node sidecar (@nudge/core);
 // this side starts it, keeps it alive, and relays its JSON lines to the frontend.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -36,9 +36,9 @@ struct Popup {
     paused: AtomicBool,
 }
 
-/// %LOCALAPPDATA%\refs, read from the environment like the rest of refs (so a sandbox moves it).
+/// %LOCALAPPDATA%\nudge, read from the environment like the rest of nudge (so a sandbox moves it).
 fn data_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("refs")
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("nudge")
 }
 
 fn log_path() -> PathBuf {
@@ -237,7 +237,7 @@ fn main() {
             log("popup started");
             let handle = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("refs")
+                .title("nudge")
                 .inner_size(760.0, 520.0)
                 .decorations(false)
                 .resizable(false)
@@ -262,9 +262,9 @@ fn main() {
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_i, &pause_i, &quit_i])?;
             let pause_item = pause_i.clone();
-            TrayIconBuilder::with_id("refs")
+            TrayIconBuilder::with_id("nudge")
                 .icon(app.default_window_icon().cloned().ok_or("no app icon")?)
-                .tooltip("refs")
+                .tooltip("nudge")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -284,5 +284,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("refs popup failed to start");
+        .expect("nudge popup failed to start");
 }

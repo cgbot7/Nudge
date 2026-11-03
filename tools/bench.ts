@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
-import { addFile, embeddingCoverage, loadConfig, ollamaClient, openDb, runIndex, sectionCount } from '@refs/core';
+import { addFile, embeddingCoverage, loadConfig, ollamaClient, openDb, runIndex, sectionCount } from '@nudge/core';
 import { REPO, environment, makeSandbox, realOllamaConfig, saveResult, stats, table, write, type Stats } from './lib.ts';
 
 const { values: args } = parseArgs({
@@ -130,7 +130,7 @@ interface HookResult {
 }
 
 function measureHook(env: NodeJS.ProcessEnv, a: string, b: string): HookResult {
-  const hook = path.join(REPO, 'shell', 'refs-hook.ps1');
+  const hook = path.join(REPO, 'shell', 'nudge-hook.ps1');
   const params = ['-Hook', hook, '-ProjectA', a, '-ProjectB', b];
   const warm = pwsh('hook-timing.ps1', [...params, '-Runs', String(RUNS)], env) as { enter: number[]; subfolder: number[]; line: string; ps: string };
   const cold: number[] = [];
@@ -216,21 +216,21 @@ async function measureSearch(env: NodeJS.ProcessEnv, pass: 'keyword' | 'hybrid')
   }
 }
 
-/** refs search from a fresh process: Node start, module load and the search. For reference; no budget applies. */
+/** nudge search from a fresh process: Node start, module load and the search. For reference; no budget applies. */
 function measureCli(env: NodeJS.ProcessEnv): Stats {
   const times: number[] = [];
   for (let i = 0; i < 10; i++) {
     const started = performance.now();
     const r = spawnSync(process.execPath, [path.join(REPO, 'packages', 'cli', 'src', 'main.ts'), 'search', QUERIES[i % QUERIES.length]!, '--json'], { env, encoding: 'utf8' });
-    if (r.status !== 0) throw new Error(`refs search failed: ${r.stderr}`);
+    if (r.status !== 0) throw new Error(`nudge search failed: ${r.stderr}`);
     times.push(performance.now() - started);
   }
   return stats(times);
 }
 
 function popupRunning(): boolean {
-  const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq refs-popup.exe', '/NH'], { encoding: 'utf8' });
-  return /refs-popup\.exe/i.test(r.stdout ?? '');
+  const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq nudge-popup.exe', '/NH'], { encoding: 'utf8' });
+  return /nudge-popup\.exe/i.test(r.stdout ?? '');
 }
 
 interface PopupResult {
@@ -242,9 +242,9 @@ interface PopupResult {
 }
 
 function measurePopup(env: NodeJS.ProcessEnv): PopupResult {
-  const exe = path.join(REPO, 'apps', 'popup', 'src-tauri', 'target', 'release', 'refs-popup.exe');
+  const exe = path.join(REPO, 'apps', 'popup', 'src-tauri', 'target', 'release', 'nudge-popup.exe');
   if (!fs.existsSync(exe)) return { skipped: 'the popup is not built (npm run popup:build)' };
-  if (popupRunning()) return { skipped: 'refs-popup.exe is already running (one instance only); quit it from its tray menu and run again' };
+  if (popupRunning()) return { skipped: 'nudge-popup.exe is already running (one instance only); quit it from its tray menu and run again' };
   const r = pwsh('popup-timing.ps1', ['-Exe', exe, '-Node', process.execPath, '-Sidecar', path.join(REPO, 'packages', 'sidecar', 'src', 'main.ts'), '-Runs', '20'], env) as {
     visible: number[];
     painted: number[];
@@ -264,7 +264,7 @@ const { importMs } = await buildLibrary(sb);
 const { a, b } = buildProjects(sb);
 const config = loadConfig().config;
 const health = await ollamaClient(config.ollama).health();
-console.log(`bench: refs index (Ollama ${health.ok ? `up, embedding with ${config.ollama.embedModel}` : 'down, keyword only'})`);
+console.log(`bench: nudge index (Ollama ${health.ok ? `up, embedding with ${config.ollama.embedModel}` : 'down, keyword only'})`);
 let started = performance.now();
 const report = await runIndex(config);
 const indexMs = performance.now() - started;
@@ -317,10 +317,10 @@ if (!skip.has('hybrid')) {
   }
 }
 if (!skip.has('cli')) {
-  console.log('bench: refs search as a fresh process');
+  console.log('bench: nudge search as a fresh process');
   const cli = measureCli(sb.env);
   result.cli = cli;
-  info('cli: refs search --json', cli, 'includes Node start');
+  info('cli: nudge search --json', cli, 'includes Node start');
 }
 if (!skip.has('popup')) {
   console.log('bench: popup hotkey (presses Ctrl+Alt+Shift+F12 on this desktop)');

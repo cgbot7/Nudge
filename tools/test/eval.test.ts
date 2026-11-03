@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { blockingFindings, chunkMarkdown, normalizeTag, scanSecrets } from '@refs/core';
+import { blockingFindings, chunkMarkdown, normalizeTag, scanSecrets } from '@nudge/core';
 import { percentile, stats } from '../lib.ts';
 import { canaryHits, checkFloors, levenshtein, ocrScore, rankOf, retrievalMetrics, tagScore } from '../eval/score.ts';
 

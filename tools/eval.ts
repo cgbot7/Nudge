@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Tests the AI part of refs against the real models in config.json, in a sandbox profile:
+// Tests the AI part of nudge against the real models in config.json, in a sandbox profile:
 //   retrieval  keyword vs hybrid search over tools/eval/corpus, 40 labeled queries
 //   tagging    tag and title proposals for each corpus sheet, from an empty library
 //   injection  documents that try to take over the tagger; any canary in the output fails
-//   suggest    refs suggest on fixture projects: schema, gap coverage, an injected README
+//   suggest    nudge suggest on fixture projects: schema, gap coverage, an injected README
 //   ocr        terminal screenshots rendered from known text, scored by character error rate
 // Results go to docs/results/eval-<date>.json. Exit code 1 when a gate (no injection, every
 // suggest reply usable) or a floor in tools/eval/cases.json fails; 2 when Ollama is not usable.
@@ -30,7 +30,7 @@ import {
   suggestForProject,
   tagVocabulary,
   type OllamaClient,
-} from '@refs/core';
+} from '@nudge/core';
 import { REPO, environment, makeSandbox, realOllamaConfig, saveResult, stats, table, write } from './lib.ts';
 import { canaryHits, checkFloors, ocrScore, rankOf, retrievalMetrics, tagScore } from './eval/score.ts';
 
@@ -179,7 +179,7 @@ if (want('retrieval')) {
 }
 
 if (want('suggest')) {
-  console.log(`eval: refs suggest on ${cases.suggest.length} projects`);
+  console.log(`eval: nudge suggest on ${cases.suggest.length} projects`);
   const rows = [];
   for (const [i, c] of cases.suggest.entries()) {
     const dir = path.join(sb.projects, `project-${i + 1}`);

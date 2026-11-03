@@ -2,7 +2,7 @@ import type { AllowEntry } from './manifest.ts';
 import { sha256 } from './util.ts';
 
 export interface Finding {
-  /** 1-based position among all findings in the text; `refs allow --finding <n>` uses it. */
+  /** 1-based position among all findings in the text; `nudge allow --finding <n>` uses it. */
   n: number;
   line: number;
   rule: string;

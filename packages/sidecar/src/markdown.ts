@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { isInside } from '@refs/core';
+import { isInside } from '@nudge/core';
 import markdownit from 'markdown-it';
 
 // Sheets are untrusted text, so the popup preview is rendered here, not in the webview:

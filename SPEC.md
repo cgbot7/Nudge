@@ -1,6 +1,6 @@
-# refs: personal cheat sheet index
+# nudge: personal cheat sheet index
 
-> **Status (2026-10-28):** all five milestones below are built. This file is the plan they were built from and is kept as written. Where the code differs: the default chat and vision model is `mistral-small3.2:24b`; the MCP server uses `@modelcontextprotocol/server` 2.3.1 instead of `@modelcontextprotocol/sdk`; the library also holds `gap-ignores.json` and `ocr\<sha256>.txt`, and `%LOCALAPPDATA%\refs` also holds `pending-allow.json` and `suggestions.json`; `refs install` also puts `bin` on the user PATH and starts the popup at logon. For the current behavior see [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
+> **Status (2026-10-28):** all five milestones below are built. This file is the plan they were built from and is kept as written. Where the code differs: the default chat and vision model is `mistral-small3.2:24b`; the MCP server uses `@modelcontextprotocol/server` 2.3.1 instead of `@modelcontextprotocol/sdk`; the library also holds `gap-ignores.json` and `ocr\<sha256>.txt`, and `%LOCALAPPDATA%\nudge` also holds `pending-allow.json` and `suggestions.json`; `nudge install` also puts `bin` on the user PATH and starts the popup at logon. For the current behavior see [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
 
 Spec for a local tool that collects every cheat sheet and reference note into one library and puts the right ones in front of you automatically, in the terminal, in your AI agent, and in a hotkey popup.
 
@@ -20,7 +20,7 @@ Success is behavioral: after a month of use, most relevant sheets have been open
 **Library and import**
 - One library folder, a private Git repo, holding every sheet. Import **moves** the original in; a manifest records its original path and SHA256, so no second copy exists to drift.
 - Formats: Markdown, TXT, DOCX, PDF (text layer), PDF (scanned) and images (PNG, JPG) via local OCR.
-- Two ways in: `refs add <file>` and an inbox folder processed on each index run.
+- Two ways in: `nudge add <file>` and an inbox folder processed on each index run.
 - Secret scan on every import. Likely secrets block the import until redacted or allowlisted.
 - Large documents split by heading (Markdown and DOCX) so each section is its own searchable entry.
 - Local LLM proposes a title and tags on import; you confirm or edit. Inbox items wait in a review queue.
@@ -28,7 +28,7 @@ Success is behavioral: after a month of use, most relevant sheets have been open
 **Matching**
 - Project type detected from file signatures, using rules in an editable `rules.json`.
 - Hybrid search: keyword (SQLite FTS5) plus embeddings from Ollama, fused, boosted by current project tags.
-- "Type a project type" mode: `refs for "node ollama docker"` returns sheets grouped by tag, plus gaps.
+- "Type a project type" mode: `nudge for "node ollama docker"` returns sheets grouped by tag, plus gaps.
 
 **Surfacing**
 - Terminal: a PowerShell prompt hook prints one line every time you enter a project under a registered root.
@@ -39,7 +39,7 @@ Success is behavioral: after a month of use, most relevant sheets have been open
 - Surface matched sheets.
 - Flag gaps: a detected tag with zero sheets of any status.
 - Remind unused sheets: relevant sheets never used, or not used in 30 days, and not marked learned.
-- LLM recommendations on demand (`refs suggest`), shown as a list; any one can be saved as a **draft** sheet marked unverified.
+- LLM recommendations on demand (`nudge suggest`), shown as a list; any one can be saved as a **draft** sheet marked unverified.
 
 **Maintenance**
 - Each sheet has a last-verified date. After 180 days (configurable) it is marked stale and shown with a warning.
@@ -69,7 +69,7 @@ Success is behavioral: after a month of use, most relevant sheets have been open
   - vision model for OCR
 - **Agent:** `@modelcontextprotocol/sdk`, stdio transport.
 - **Popup:** Tauri v2 tray app, Vue and TypeScript frontend, global shortcut plugin.
-- **Runtime rule (no daemon):** all slow work (extraction, OCR, LLM, embeddings, project scans) happens in `refs index`, run on demand and by Windows Task Scheduler (at logon and every 30 minutes). The terminal hook only reads a precomputed JSON cache. The popup is resident only because a global hotkey requires a running process; it may keep a Node sidecar alive while it runs, but nothing else depends on it.
+- **Runtime rule (no daemon):** all slow work (extraction, OCR, LLM, embeddings, project scans) happens in `nudge index`, run on demand and by Windows Task Scheduler (at logon and every 30 minutes). The terminal hook only reads a precomputed JSON cache. The popup is resident only because a global hotkey requires a running process; it may keep a Node sidecar alive while it runs, but nothing else depends on it.
 - **Performance budgets:** hook adds under 50 ms to the prompt; popup visible under 300 ms after the hotkey; keyword results under 100 ms; hybrid results under 1 s with Ollama warm.
 - **Privacy:** fully local. No network calls except to the configured Ollama host and an explicit `git push`.
 - **Writing style:** CLI output and generated drafts use plain punctuation (no em dashes).
@@ -79,7 +79,7 @@ Success is behavioral: after a month of use, most relevant sheets have been open
 ### Tool repository
 
 ```
-refs/
+nudge/
   packages/core/src/
     config.ts         load and validate config.json
     manifest.ts       read, write, and diff manifest.json
@@ -99,13 +99,13 @@ refs/
   packages/cli/src/main.ts
   packages/mcp/src/server.ts
   apps/popup/         Tauri v2 + Vue
-  shell/refs-hook.ps1 PowerShell prompt hook (no Node at runtime)
+  shell/nudge-hook.ps1 PowerShell prompt hook (no Node at runtime)
 ```
 
 ### Data locations
 
 ```
-%USERPROFILE%\refs-library\     Git repo, the source of truth
+%USERPROFILE%\nudge-library\     Git repo, the source of truth
   sheets\                       imported files, named <id>-<slug>.<ext>
   drafts\                       LLM drafts (Markdown)
   manifest.json                 one entry per sheet
@@ -113,19 +113,19 @@ refs/
   tags.json                     tag vocabulary and aliases
   inbox\                        drop folder, listed in .gitignore
     _blocked\  _duplicates\     items that failed import, with a reason file
-%LOCALAPPDATA%\refs\            derived and rebuildable
+%LOCALAPPDATA%\nudge\            derived and rebuildable
   index.db  extract-cache\<sha256>.txt  hook-cache.json
-  usage.jsonl  last-project.json  refs.lock  logs\
-%APPDATA%\refs\config.json      machine-specific settings
+  usage.jsonl  last-project.json  nudge.lock  logs\
+%APPDATA%\nudge\config.json      machine-specific settings
 ```
 
-Deleting everything under `%LOCALAPPDATA%\refs\` must lose nothing except usage history; `refs index --rebuild` recreates it from the library.
+Deleting everything under `%LOCALAPPDATA%\nudge\` must lose nothing except usage history; `nudge index --rebuild` recreates it from the library.
 
 ### config.json
 
 ```json
 {
-  "library": "C:/Users/<you>/refs-library",
+  "library": "C:/Users/<you>/nudge-library",
   "roots": ["D:/Projects", "C:/Users/<you>/source"],
   "ollama": { "host": "http://localhost:11434", "embedModel": "bge-m3", "chatModel": "qwen", "visionModel": "<vision model>" },
   "staleAfterDays": 180,
@@ -175,22 +175,22 @@ Supported keys: `files` (globs), `packageDeps` (package.json dependencies), `pyD
 ### CLI
 
 ```
-refs add <file> [--tags a,b] [--yes]   import one file
-refs index [--rebuild]                 inbox, library changes, embeddings, project scans, hook cache
-refs review                            confirm tags for pending items
-refs search <query> [--tags a,b] [--json]
-refs for <path | "tag tag">            sheets by tag, gaps, unused reminders
-refs open <id> [--section <n>]         open (Markdown in terminal or editor, others in default app); logs usage
-refs suggest [path]                    LLM recommendations; pick one to save as draft
-refs approve <id>                      draft or pending to verified; sets lastVerified
-refs verify <id>                       bump lastVerified
-refs learned <id> [--undo]
-refs allow <file> --finding <n>        allowlist a secret-scan false positive
-refs ignore-gap <tag> [--project]
-refs scan [path]                       re-detect one project, rewrite its cache entry
-refs context --cwd <dir>               compact index for agent session start
-refs doctor                            check Ollama, models, manifest vs files, lock, schedule
-refs install                           add PowerShell hook, Task Scheduler job, MCP registration
+nudge add <file> [--tags a,b] [--yes]   import one file
+nudge index [--rebuild]                 inbox, library changes, embeddings, project scans, hook cache
+nudge review                            confirm tags for pending items
+nudge search <query> [--tags a,b] [--json]
+nudge for <path | "tag tag">            sheets by tag, gaps, unused reminders
+nudge open <id> [--section <n>]         open (Markdown in terminal or editor, others in default app); logs usage
+nudge suggest [path]                    LLM recommendations; pick one to save as draft
+nudge approve <id>                      draft or pending to verified; sets lastVerified
+nudge verify <id>                       bump lastVerified
+nudge learned <id> [--undo]
+nudge allow <file> --finding <n>        allowlist a secret-scan false positive
+nudge ignore-gap <tag> [--project]
+nudge scan [path]                       re-detect one project, rewrite its cache entry
+nudge context --cwd <dir>               compact index for agent session start
+nudge doctor                            check Ollama, models, manifest vs files, lock, schedule
+nudge install                           add PowerShell hook, Task Scheduler job, MCP registration
 ```
 
 ### Terminal line
@@ -198,25 +198,25 @@ refs install                           add PowerShell hook, Task Scheduler job, 
 One line each time you enter a different project (moving between subfolders of the same project prints nothing):
 
 ```
-refs [node, docker, playwright] 4 sheets (1 stale) | gap: playwright | try: "Docker volumes" | refs for .
+nudge [node, docker, playwright] 4 sheets (1 stale) | gap: playwright | try: "Docker volumes" | nudge for .
 ```
 
-`try:` rotates through relevant unused sheets, one per entry. If the folder is under a root but not in the cache, the hook prints `refs: new project, scanning` and starts `refs scan` hidden in the background.
+`try:` rotates through relevant unused sheets, one per entry. If the folder is under a root but not in the cache, the hook prints `nudge: new project, scanning` and starts `nudge scan` hidden in the background.
 
 ### MCP tools
 
 ```
-refs_search(query: string, tags?: string[], limit?: number = 5)
+nudge_search(query: string, tags?: string[], limit?: number = 5)
   -> [{ id, title, section, tags, status, stale, snippet }]
-refs_get(id: string, section?: number)
+nudge_get(id: string, section?: number)
   -> { id, title, section, text, status, stale, lastVerified }
-refs_for_project(path: string)
+nudge_for_project(path: string)
   -> { tags, sheets: [...], gaps: [...] }
 ```
 
-Results include `status` and `stale` so the agent can say when it is relying on an old or draft sheet. Text is wrapped as reference data, not instructions. Every `refs_get` writes an `agent_fetch` usage event.
+Results include `status` and `stale` so the agent can say when it is relying on an old or draft sheet. Text is wrapped as reference data, not instructions. Every `nudge_get` writes an `agent_fetch` usage event.
 
-**Claude Code:** a SessionStart hook runs `refs context --cwd <dir>`; its output (at most 10 entries, about 300 tokens: id, title, tags, stale flag, and one line telling the agent to call `refs_get`) is added to session context. Drafts are excluded from this index but remain findable through `refs_search`, flagged as drafts.
+**Claude Code:** a SessionStart hook runs `nudge context --cwd <dir>`; its output (at most 10 entries, about 300 tokens: id, title, tags, stale flag, and one line telling the agent to call `nudge_get`) is added to session context. Drafts are excluded from this index but remain findable through `nudge_search`, flagged as drafts.
 **OpenCode:** MCP server registered in its config. How to inject the start-of-session index depends on OpenCode's current plugin or instructions mechanism; confirm against its docs during milestone 4.
 
 ### Popup
@@ -231,7 +231,7 @@ Search box with results as you type (keyword first, re-ranked by hybrid search w
 - **Moves across drives:** copy, verify hash, then delete the original. If deletion fails, keep both and report; never leave the library entry unverified.
 - **Locked files:** Word holds a lock on open DOCX files. Import fails gracefully and leaves the original in place. Office lock files (`~$*.docx`) are ignored everywhere.
 - **Edited in the library:** next index sees a new hash, re-extracts, re-embeds, updates `sha256` and `updatedAt`. Editing does not reset `lastVerified` and does not approve a draft.
-- **Renamed or deleted outside the tool:** index matches unknown files to missing entries by hash (rename). Unmatched entries are reported by `refs doctor`, never silently removed.
+- **Renamed or deleted outside the tool:** index matches unknown files to missing entries by hash (rename). Unmatched entries are reported by `nudge doctor`, never silently removed.
 - **Large binaries:** warn on files over 20 MB, since Git history grows with every version.
 - **Windows paths:** normalize to forward slashes and a lowercase drive letter before comparing; support long paths and accented filenames.
 
@@ -250,40 +250,40 @@ Search box with results as you type (keyword first, re-ranked by hybrid search w
 - **Ollama down:** hook and MCP unaffected; search falls back to keyword with a notice; imports still move and keyword-index, but tagging and OCR are queued as `pending`.
 - **Embedding model changed:** vectors store their model name; a mismatch triggers a full re-embed on the next index.
 - **Tag drift** (`ollama`, `Ollama`, `local-llm`): tags are lowercase kebab case, `tags.json` holds aliases, and the LLM must prefer existing tags and mark new ones for your confirmation.
-- **Prompt injection:** `refs suggest` reads READMEs and manifests, which are untrusted. Output must match a JSON schema; anything else is discarded. The tool never runs anything a model returns.
+- **Prompt injection:** `nudge suggest` reads READMEs and manifests, which are untrusted. Output must match a JSON schema; anything else is discarded. The tool never runs anything a model returns.
 - **Bad JSON from the model:** retry once at temperature 0, then fall back to no proposal and ask you directly.
 
 **Detection and hook**
 - **Project root:** the nearest ancestor (inside a registered root) with `.git` or a signature file, otherwise the first-level folder under the root. Nested repos inside a project count as their own project.
-- **Unknown project types:** no rule matches, so the line says `refs: no tags (add a rule to rules.json)`. Unknown types are fixed by adding rules, not by guessing.
-- **Project changes** (you add a Dockerfile): picked up at the next scheduled index or immediately with `refs scan .`.
-- **Hook cache missing or corrupt:** the hook prints nothing and never throws; `refs doctor` reports it.
-- **Gap noise:** a tag you never intend to document can be silenced with `refs ignore-gap`.
+- **Unknown project types:** no rule matches, so the line says `nudge: no tags (add a rule to rules.json)`. Unknown types are fixed by adding rules, not by guessing.
+- **Project changes** (you add a Dockerfile): picked up at the next scheduled index or immediately with `nudge scan .`.
+- **Hook cache missing or corrupt:** the hook prints nothing and never throws; `nudge doctor` reports it.
+- **Gap noise:** a tag you never intend to document can be silenced with `nudge ignore-gap`.
 
 **Concurrency**
-- One writer at a time via `refs.lock`. A scheduled index that finds the lock exits quietly; a CLI command waits up to 10 seconds, then reports. The hook only reads, and the cache is written atomically (temp file then rename).
+- One writer at a time via `nudge.lock`. A scheduled index that finds the lock exits quietly; a CLI command waits up to 10 seconds, then reports. The hook only reads, and the cache is written atomically (temp file then rename).
 
 ## Milestones
 
-1. **Library and keyword search.** Config, manifest, `refs add` for MD, TXT, DOCX and text PDFs, secret scan with allowlist, move with hash verify, auto-commit, heading split, SQLite FTS5, `refs search`, `refs open`, `refs doctor`.
-2. **Detection and terminal hook.** `rules.json` engine, registered roots, project root resolution, hook cache, PowerShell prompt hook, gaps, usage log and unused reminders, stale marking, `refs for`, `refs scan`, Task Scheduler via `refs install`.
-3. **Local AI layer.** Embeddings and hybrid search, LLM tag proposal with confirm, inbox and `refs review`, OCR for images and scanned PDFs, Ollama-down fallbacks, model-change re-embed.
-4. **Agent integration.** MCP server, `refs context`, Claude Code SessionStart hook, OpenCode registration, `agent_fetch` usage events, `refs suggest` with draft saving and `refs approve`.
+1. **Library and keyword search.** Config, manifest, `nudge add` for MD, TXT, DOCX and text PDFs, secret scan with allowlist, move with hash verify, auto-commit, heading split, SQLite FTS5, `nudge search`, `nudge open`, `nudge doctor`.
+2. **Detection and terminal hook.** `rules.json` engine, registered roots, project root resolution, hook cache, PowerShell prompt hook, gaps, usage log and unused reminders, stale marking, `nudge for`, `nudge scan`, Task Scheduler via `nudge install`.
+3. **Local AI layer.** Embeddings and hybrid search, LLM tag proposal with confirm, inbox and `nudge review`, OCR for images and scanned PDFs, Ollama-down fallbacks, model-change re-embed.
+4. **Agent integration.** MCP server, `nudge context`, Claude Code SessionStart hook, OpenCode registration, `agent_fetch` usage events, `nudge suggest` with draft saving and `nudge approve`.
 5. **Hotkey popup.** Tauri tray app, global shortcut, live search, preview, mark learned and verified, project boost from `last-project.json`.
 
 ## Done means
 
 Run this script on a clean machine profile with Ollama installed. Every step must pass.
 
-1. `refs install`, then register a test root containing a project with `package.json` (depends on `playwright`) and a `Dockerfile`. Library and Task Scheduler job exist; `refs doctor` is all green.
-2. Drop three files in the inbox: `docker-notes.md` (several headings), `ollama-pull.png` (screenshot of a terminal command), and `git-tips.docx` containing a real-looking `ghp_` token. Run `refs index`.
+1. `nudge install`, then register a test root containing a project with `package.json` (depends on `playwright`) and a `Dockerfile`. Library and Task Scheduler job exist; `nudge doctor` is all green.
+2. Drop three files in the inbox: `docker-notes.md` (several headings), `ollama-pull.png` (screenshot of a terminal command), and `git-tips.docx` containing a real-looking `ghp_` token. Run `nudge index`.
    - The MD and PNG files leave the inbox, appear in `manifest.json` as `pending`, and each has a Git commit.
    - The DOCX lands in `_blocked` with a reason file naming the line and rule, and is not in the index.
-3. `refs review` accepts proposed tags. Redact the DOCX, drop it back in, run `refs index`; it imports.
+3. `nudge review` accepts proposed tags. Redact the DOCX, drop it back in, run `nudge index`; it imports.
 4. In a new PowerShell window, `cd` into the test project. Within 50 ms the line shows tags `node, docker, playwright`, the Docker sheet, `gap: playwright`, and a `try:` suggestion. `cd` into a subfolder prints nothing.
-5. Stop Ollama. `refs search "remove stopped containers"` returns the matching Docker section with a "keyword only" notice. Start Ollama. `refs search "download a model"` returns the OCR'd screenshot.
-6. Start Claude Code in the project. The session context lists the matched sheets (no drafts). Ask how to prune Docker images using your notes; the agent calls `refs_get`, and `usage.jsonl` gains an `agent_fetch` event. Re-enter the project: that sheet is no longer offered in `try:`.
-7. `refs suggest .` returns schema-valid recommendations. Save one as a draft. It shows as `[draft]` in `refs search`, is absent from `refs context`, and becomes normal after `refs approve`.
+5. Stop Ollama. `nudge search "remove stopped containers"` returns the matching Docker section with a "keyword only" notice. Start Ollama. `nudge search "download a model"` returns the OCR'd screenshot.
+6. Start Claude Code in the project. The session context lists the matched sheets (no drafts). Ask how to prune Docker images using your notes; the agent calls `nudge_get`, and `usage.jsonl` gains an `agent_fetch` event. Re-enter the project: that sheet is no longer offered in `try:`.
+7. `nudge suggest .` returns schema-valid recommendations. Save one as a draft. It shows as `[draft]` in `nudge search`, is absent from `nudge context`, and becomes normal after `nudge approve`.
 8. Press the hotkey. The popup appears in under 300 ms; search "docker", preview a section, mark it learned. It never appears in `try:` again.
-9. Set one sheet's `lastVerified` to 200 days ago and run `refs index`. It shows as stale in the hook line, search, popup and MCP results. `refs verify` clears it.
-10. Delete `%LOCALAPPDATA%\refs\index.db` and run `refs index --rebuild`. Steps 4, 5 and 8 give the same results, proving the library alone is the source of truth.
+9. Set one sheet's `lastVerified` to 200 days ago and run `nudge index`. It shows as stale in the hook line, search, popup and MCP results. `nudge verify` clears it.
+10. Delete `%LOCALAPPDATA%\nudge\index.db` and run `nudge index --rebuild`. Steps 4, 5 and 8 give the same results, proving the library alone is the source of truth.

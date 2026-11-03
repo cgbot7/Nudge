@@ -18,7 +18,7 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-public static class RefsBenchNative {
+public static class NudgeBenchNative {
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
@@ -48,7 +48,7 @@ public static class RefsBenchNative {
 '@
 
 $VK_CTRL = 0x11; $VK_ALT = 0x12; $VK_SHIFT = 0x10; $VK_F12 = 0x7B; $VK_ESC = 0x1B
-$log = Join-Path $env:LOCALAPPDATA 'refs\logs\popup.log'
+$log = Join-Path $env:LOCALAPPDATA 'nudge\logs\popup.log'
 
 function Read-Log { if (Test-Path -LiteralPath $log) { [IO.File]::ReadAllLines($log) } else { @() } }
 function Wait-Until([scriptblock]$cond, [int]$timeoutMs) {
@@ -63,7 +63,7 @@ try {
         throw "the popup did not register Ctrl+Alt+Shift+F12 within 60 s; see $log"
     }
     $hwnd = [IntPtr]::Zero
-    [void](Wait-Until { $script:hwnd = [RefsBenchNative]::FindWindow([uint32]$proc.Id, 'refs'); $script:hwnd -ne [IntPtr]::Zero } 10000)
+    [void](Wait-Until { $script:hwnd = [NudgeBenchNative]::FindWindow([uint32]$proc.Id, 'nudge'); $script:hwnd -ne [IntPtr]::Zero } 10000)
     if ($hwnd -eq [IntPtr]::Zero) { throw 'the popup window was not found' }
     # The frontend registers the hotkey once the sidecar answers; give the page a moment to settle.
     Start-Sleep -Milliseconds 1500
@@ -75,17 +75,17 @@ try {
     for ($i = 0; $i -lt $Runs; $i++) {
         $before = (Read-Log | Where-Object { $_ -match 'hotkey to painted' }).Count
         $sw.Restart()
-        [RefsBenchNative]::Chord([byte[]]@($VK_CTRL, $VK_ALT, $VK_SHIFT), [byte]$VK_F12)
-        while (-not [RefsBenchNative]::IsWindowVisible($hwnd) -and $sw.ElapsedMilliseconds -lt 3000) { }
+        [NudgeBenchNative]::Chord([byte[]]@($VK_CTRL, $VK_ALT, $VK_SHIFT), [byte]$VK_F12)
+        while (-not [NudgeBenchNative]::IsWindowVisible($hwnd) -and $sw.ElapsedMilliseconds -lt 3000) { }
         $sw.Stop()
-        if (-not [RefsBenchNative]::IsWindowVisible($hwnd)) { $missed++; continue }
+        if (-not [NudgeBenchNative]::IsWindowVisible($hwnd)) { $missed++; continue }
         $visible.Add($sw.Elapsed.TotalMilliseconds)
         if (Wait-Until { (Read-Log | Where-Object { $_ -match 'hotkey to painted' }).Count -gt $before } 3000) {
             $last = (Read-Log | Where-Object { $_ -match 'hotkey to painted' })[-1]
             $painted.Add([double]([regex]::Match($last, 'painted: ([\d.]+) ms').Groups[1].Value))
         }
-        [RefsBenchNative]::Chord([byte[]]@(), [byte]$VK_ESC)
-        if (-not (Wait-Until { -not [RefsBenchNative]::IsWindowVisible($hwnd) } 1000)) { [void][RefsBenchNative]::ShowWindow($hwnd, 0) }
+        [NudgeBenchNative]::Chord([byte[]]@(), [byte]$VK_ESC)
+        if (-not (Wait-Until { -not [NudgeBenchNative]::IsWindowVisible($hwnd) } 1000)) { [void][NudgeBenchNative]::ShowWindow($hwnd, 0) }
         Start-Sleep -Milliseconds 300
     }
     [ordered]@{ visible = $visible.ToArray(); painted = $painted.ToArray(); missed = $missed } | ConvertTo-Json -Compress

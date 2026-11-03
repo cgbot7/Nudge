@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acquireLock, pathKey, readHookCache, readManifest, readUsage } from '@refs/core';
+import { acquireLock, pathKey, readHookCache, readManifest, readUsage } from '@nudge/core';
 import { startFakeOllama, type FakeOllama } from '../../core/test/fakeollama.ts';
 import { DEAD_OLLAMA, DOCKER_MD, setupEnv, write, type TestEnv } from '../../core/test/helpers.ts';
 import { MARK_OPEN, POPUP_LOCK_WAIT_MS } from '../src/handlers.ts';
@@ -19,7 +19,7 @@ let app: string;
 let side: Sidecar;
 
 // Async, because the fake Ollama answers from this process.
-function refs(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function nudge(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], { env: t.env, cwd: t.work });
     let stdout = '';
@@ -44,7 +44,7 @@ class Sidecar {
   private waiting = new Map<unknown, (r: Reply) => void>();
   private buffer = '';
   constructor() {
-    this.child = spawn(process.execPath, [SIDECAR], { env: { ...t.env, REFS_SIDECAR_NO_OPEN: '1' } });
+    this.child = spawn(process.execPath, [SIDECAR], { env: { ...t.env, NUDGE_SIDECAR_NO_OPEN: '1' } });
     this.child.stderr.on('data', (d: Buffer) => (this.stderr += d.toString('utf8')));
     this.child.stdout.on('data', (d: Buffer) => {
       this.buffer += d.toString('utf8');
@@ -76,7 +76,7 @@ class Sidecar {
 }
 
 function setConfig(patch: Record<string, unknown>): void {
-  const file = path.join(t.env.APPDATA!, 'refs', 'config.json');
+  const file = path.join(t.env.APPDATA!, 'nudge', 'config.json');
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, any>;
   fs.writeFileSync(file, JSON.stringify({ ...cfg, ...patch, ollama: { ...cfg.ollama, ...(patch.ollama as object) } }));
 }
@@ -97,12 +97,12 @@ before(async () => {
     ['add', write(t.work, 'docker-notes.md', DOCKER_MD), '--tags', 'docker'],
     ['add', write(t.work, 'ollama-pull.png', PNG), '--tags', 'ollama'],
   ]) {
-    const r = await refs(args);
+    const r = await nudge(args);
     assert.equal(r.code, 0, r.stderr);
   }
   fake.chatReplies.push(JSON.stringify({ title: 'Git tips', tags: ['git'] }));
   write(path.join(t.library, 'inbox'), 'git-tips.md', '# Git tips\n\nUndo the last commit with git reset --soft HEAD~1.\n');
-  const r = await refs(['index']);
+  const r = await nudge(['index']);
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(readManifest(t.library).map((s) => [s.id, s.status, s.format]), [['s_0001', 'verified', 'md'], ['s_0002', 'verified', 'png'], ['s_0003', 'pending', 'md']]);
   side = new Sidecar();
@@ -147,7 +147,7 @@ test('search: keyword pass first, hybrid pass next, boosted by last-project.json
   assert.deepEqual(Object.keys(kw.hits[0]).sort(), ['heading', 'id', 'learned', 'ocr', 'section', 'snippet', 'stale', 'status', 'tags', 'title']);
 
   // The prompt hook writes last-project.json; the popup takes the tags from the hook cache.
-  write(path.join(t.env.LOCALAPPDATA!, 'refs'), 'last-project.json', JSON.stringify({ key: pathKey(app), path: app.replace(/\\/g, '/'), cwd: app, tags: ['stale-tag'], at: '2026-10-20T08:00:00Z', rotation: {} }));
+  write(path.join(t.env.LOCALAPPDATA!, 'nudge'), 'last-project.json', JSON.stringify({ key: pathKey(app), path: app.replace(/\\/g, '/'), cwd: app, tags: ['stale-tag'], at: '2026-10-20T08:00:00Z', rotation: {} }));
   const hy = await side.call('search', { q: 'download a model', mode: 'hybrid', seq: 2 });
   assert.equal(hy.pass, 'hybrid');
   assert.equal(hy.mode, 'hybrid');

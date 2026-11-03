@@ -7,7 +7,7 @@ import type { ProposeFn } from './llm.ts';
 import { withLock } from './lock.ts';
 import { findById, readManifest, writeManifest, type Sheet } from './manifest.ts';
 import { addTagsToVocab } from './rules.ts';
-import { RefsError, errorMessage, normalizeTag, today } from './util.ts';
+import { NudgeError, errorMessage, normalizeTag, today } from './util.ts';
 
 /** The review queue: pending sheets, oldest first. */
 export function pendingSheets(library: string): Sheet[] {
@@ -36,10 +36,10 @@ export function acceptReview(config: Config, id: string, decision: ReviewDecisio
   return withLock('review', () => {
     const sheets = readManifest(config.library);
     const sheet = findById(sheets, id);
-    if (!sheet) throw new RefsError(`no sheet with id ${id}.`);
-    if (sheet.status !== 'pending') throw new RefsError(`${id} is ${sheet.status}, not pending; there is nothing to review.`);
+    if (!sheet) throw new NudgeError(`no sheet with id ${id}.`);
+    if (sheet.status !== 'pending') throw new NudgeError(`${id} is ${sheet.status}, not pending; there is nothing to review.`);
     const tags = [...new Set((decision.tags ?? sheet.proposal?.tags ?? []).map(normalizeTag).filter(Boolean))];
-    if (!tags.length) throw new RefsError(`${id} has no proposed tags; give them with --tags a,b.`);
+    if (!tags.length) throw new NudgeError(`${id} has no proposed tags; give them with --tags a,b.`);
     const title = (decision.title ?? sheet.proposal?.title ?? sheet.title).trim() || sheet.title;
 
     sheet.title = title;
@@ -49,7 +49,7 @@ export function acceptReview(config: Config, id: string, decision: ReviewDecisio
     delete sheet.proposal;
     writeManifest(config.library, sheets);
     const addedToVocab = addTagsToVocab(config.library, tags);
-    const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `refs: review ${id} (verified: ${tags.join(', ')})`);
+    const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `nudge: review ${id} (verified: ${tags.join(', ')})`);
     refreshHookCache(config);
     return { sheet, addedToVocab, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
   }, opts);
@@ -65,7 +65,7 @@ export interface RetagReport {
 
 /**
  * Ask for proposals for pending sheets that have none yet (imported while Ollama was
- * down). Call with the refs.lock held; writes and commits manifest.json once.
+ * down). Call with the nudge.lock held; writes and commits manifest.json once.
  */
 export async function retagQueued(library: string, propose: ProposeFn): Promise<RetagReport> {
   const report: RetagReport = { proposed: [], queued: [], warnings: [] };
@@ -94,7 +94,7 @@ export async function retagQueued(library: string, propose: ProposeFn): Promise<
   }
   if (report.proposed.length) {
     writeManifest(library, sheets);
-    const commit = commitPaths(library, ['manifest.json'], `refs: tag proposals for ${report.proposed.join(', ')}`);
+    const commit = commitPaths(library, ['manifest.json'], `nudge: tag proposals for ${report.proposed.join(', ')}`);
     if (!commit.ok) report.commitError = commit.stderr || 'unknown error';
   }
   return report;

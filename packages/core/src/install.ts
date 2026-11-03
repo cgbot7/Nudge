@@ -5,20 +5,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyAgents, backupName, planAgents, type AgentPlan, type AgentTargets } from './agents.ts';
 import { configDir } from './paths.ts';
-import { RefsError } from './util.ts';
+import { NudgeError } from './util.ts';
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 
-/** Where this checkout keeps the pieces refs install points at. */
+/** Where this checkout keeps the pieces nudge install points at. */
 export function repoPaths() {
   return {
-    hook: path.join(REPO, 'shell', 'refs-hook.ps1'),
+    hook: path.join(REPO, 'shell', 'nudge-hook.ps1'),
     cli: path.join(REPO, 'packages', 'cli', 'src', 'main.ts'),
     mcp: path.join(REPO, 'packages', 'mcp', 'src', 'server.ts'),
     bin: path.join(REPO, 'bin'),
     sidecar: path.join(REPO, 'packages', 'sidecar', 'src', 'main.ts'),
-    /** The built popup; REFS_POPUP_EXE points tests at a stand-in. */
-    popup: process.env.REFS_POPUP_EXE || path.join(REPO, 'apps', 'popup', 'src-tauri', 'target', 'release', 'refs-popup.exe'),
+    /** The built popup; NUDGE_POPUP_EXE points tests at a stand-in. */
+    popup: process.env.NUDGE_POPUP_EXE || path.join(REPO, 'apps', 'popup', 'src-tauri', 'target', 'release', 'nudge-popup.exe'),
   };
 }
 
@@ -28,21 +28,21 @@ export function agentTargets(node = process.execPath): AgentTargets {
   return { node, cli, server: mcp };
 }
 
-export const HOOK_BEGIN = '# >>> refs hook (managed by refs install) >>>';
-export const HOOK_END = '# <<< refs hook <<<';
+export const HOOK_BEGIN = '# >>> nudge hook (managed by nudge install) >>>';
+export const HOOK_END = '# <<< nudge hook <<<';
 
 /** HKCU Run key that starts the popup at logon. Overridable so tests use a scratch key. */
 export function runKey(): string {
-  return process.env.REFS_RUN_KEY || 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  return process.env.NUDGE_RUN_KEY || 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 }
 
 export function runValueName(): string {
-  return process.env.REFS_RUN_VALUE_NAME || 'refs popup';
+  return process.env.NUDGE_RUN_VALUE_NAME || 'nudge popup';
 }
 
 /** Overridable so tests never see or touch the real scheduled task. */
 export function taskName(): string {
-  return process.env.REFS_TASK_NAME || 'refs index';
+  return process.env.NUDGE_TASK_NAME || 'nudge index';
 }
 
 export interface SystemInfo {
@@ -55,7 +55,7 @@ export interface SystemInfo {
   userPath: { value: string; kind: string } | null;
 }
 
-/** Everything refs install and refs doctor do to the machine goes through here. */
+/** Everything nudge install and nudge doctor do to the machine goes through here. */
 export interface SystemOps {
   info(): SystemInfo;
   writeUserPath(value: string): void;
@@ -99,10 +99,10 @@ foreach ($scope in 'MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine')
 // (and so new terminals) see the change without signing out.
 const WRITE_PATH_SCRIPT = `
 $ErrorActionPreference = 'Stop'
-New-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Value $env:REFS_NEW_PATH -PropertyType ExpandString -Force | Out-Null
-Add-Type -Namespace RefsInstall -Name Win32 -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
+New-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Value $env:NUDGE_NEW_PATH -PropertyType ExpandString -Force | Out-Null
+Add-Type -Namespace NudgeInstall -Name Win32 -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
 $r = [UIntPtr]::Zero
-[void][RefsInstall.Win32]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
+[void][NudgeInstall.Win32]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
 `;
 
 // A PSModulePath inherited from a PowerShell 7 session lists pwsh's own copies of the
@@ -123,18 +123,18 @@ export function realSystem(): SystemOps {
   return {
     info() {
       const r = powershell(INFO_SCRIPT);
-      if (r.error || r.status !== 0) throw new RefsError(`could not query PowerShell: ${r.error?.message ?? r.stderr.trim()}`);
+      if (r.error || r.status !== 0) throw new NudgeError(`could not query PowerShell: ${r.error?.message ?? r.stderr.trim()}`);
       const raw = JSON.parse(r.stdout) as { documents: string; executionPolicy: string; pwshInstalled: boolean; path: string | null; kind: string | null };
       return {
-        documents: process.env.REFS_DOCUMENTS_DIR || raw.documents,
+        documents: process.env.NUDGE_DOCUMENTS_DIR || raw.documents,
         executionPolicy: raw.executionPolicy,
         pwshInstalled: raw.pwshInstalled,
         userPath: raw.path === null ? null : { value: raw.path, kind: raw.kind ?? 'String' },
       };
     },
     writeUserPath(value) {
-      const r = powershell(WRITE_PATH_SCRIPT, { REFS_NEW_PATH: value });
-      if (r.error || r.status !== 0) throw new RefsError(`could not update the user PATH: ${r.error?.message ?? r.stderr.trim()}`);
+      const r = powershell(WRITE_PATH_SCRIPT, { NUDGE_NEW_PATH: value });
+      if (r.error || r.status !== 0) throw new NudgeError(`could not update the user PATH: ${r.error?.message ?? r.stderr.trim()}`);
     },
     taskExists(name) {
       const r = spawnSync('schtasks.exe', ['/Query', '/TN', name], { encoding: 'utf8', windowsHide: true });
@@ -151,9 +151,9 @@ export function realSystem(): SystemOps {
     },
     runClaude(claude, args) {
       // A sandboxed home (tests) must never reach the real ~/.claude.json through claude.exe.
-      if (process.env.REFS_HOME_DIR) throw new RefsError('refusing to run claude while REFS_HOME_DIR points at a sandbox home.');
+      if (process.env.NUDGE_HOME_DIR) throw new NudgeError('refusing to run claude while NUDGE_HOME_DIR points at a sandbox home.');
       const r = spawnSync(claude, args, { encoding: 'utf8', windowsHide: true });
-      if (r.error || r.status !== 0) throw new RefsError(`claude ${args.slice(0, 2).join(' ')} failed: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+      if (r.error || r.status !== 0) throw new NudgeError(`claude ${args.slice(0, 2).join(' ')} failed: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
     },
     readRunValue(name) {
       const r = spawnSync('reg.exe', ['query', runKey(), '/v', name], { encoding: 'utf8', windowsHide: true });
@@ -161,20 +161,20 @@ export function realSystem(): SystemOps {
     },
     writeRunValue(name, value) {
       const r = spawnSync('reg.exe', ['add', runKey(), '/v', name, '/t', 'REG_SZ', '/d', value, '/f'], { encoding: 'utf8', windowsHide: true });
-      if (r.error || r.status !== 0) throw new RefsError(`could not write "${name}" in ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+      if (r.error || r.status !== 0) throw new NudgeError(`could not write "${name}" in ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
     },
     exportRunKey(file) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       const r = spawnSync('reg.exe', ['export', runKey(), file, '/y'], { encoding: 'utf8', windowsHide: true });
-      if (r.error || r.status !== 0) throw new RefsError(`could not back up ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+      if (r.error || r.status !== 0) throw new NudgeError(`could not back up ${runKey()}: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
     },
     createTask(name, xml) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-task-'));
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nudge-task-'));
       const file = path.join(dir, 'task.xml');
       try {
         fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]));
         const r = spawnSync('schtasks.exe', ['/Create', '/TN', name, '/XML', file, '/F'], { encoding: 'utf8', windowsHide: true });
-        if (r.error || r.status !== 0) throw new RefsError(`could not register the scheduled task: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
+        if (r.error || r.status !== 0) throw new NudgeError(`could not register the scheduled task: ${r.error?.message ?? (r.stderr || r.stdout).trim()}`);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -216,7 +216,7 @@ export function planPopupLogon(sys: SystemOps, now = new Date()): PopupPlan {
   const before = sys.readRunValue(name);
   const after = popupCommand();
   const base = { key: runKey(), name, exe: popup, before, after, backup: null };
-  if (!fs.existsSync(popup)) return { ...base, action: 'skip', note: `the popup is not built yet (${popup}); run npm run popup:build, then refs install again` };
+  if (!fs.existsSync(popup)) return { ...base, action: 'skip', note: `the popup is not built yet (${popup}); run npm run popup:build, then nudge install again` };
   // Windows paths compare case-insensitively.
   if (before !== null && before.toLowerCase() === after.toLowerCase()) return { ...base, action: 'none' };
   if (before === null) return { ...base, action: 'create' };
@@ -298,7 +298,7 @@ export function taskXml(spec: TaskSpec): string {
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>refs: sync the cheat sheet library, scan projects and refresh the terminal hook cache</Description>
+    <Description>nudge: sync the cheat sheet library, scan projects and refresh the terminal hook cache</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -347,7 +347,7 @@ export interface ProfileChange {
 const xmlUnescape = (s: string) => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 /**
- * The parts of a task definition refs cares about; equal parts mean the task needs no change.
+ * The parts of a task definition nudge cares about; equal parts mean the task needs no change.
  * Windows exports the task with entities decoded, the user as a SID and the default
  * RunLevel left out, so the user is not compared and a missing RunLevel is LeastPrivilege.
  */
@@ -367,7 +367,7 @@ export interface InstallPlan {
   warnings: string[];
 }
 
-/** Work out every change refs install would make, without making any. */
+/** Work out every change nudge install would make, without making any. */
 export function planInstall(sys: SystemOps): InstallPlan {
   const info = sys.info();
   const { hook, bin } = repoPaths();
@@ -377,7 +377,7 @@ export function planInstall(sys: SystemOps): InstallPlan {
     }
     const { text, encoding } = decodeProfile(fs.readFileSync(file));
     const next = upsertHookBlock(text, hook);
-    const backup = `${file}.refs-backup`;
+    const backup = `${file}.nudge-backup`;
     return { host, file, action: next.action, backup: next.action !== 'none' && !fs.existsSync(backup) ? backup : null, content: encodeProfile(next.content, encoding) };
   });
 

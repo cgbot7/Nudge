@@ -5,7 +5,7 @@ import { importLocked, type AddOptions } from './import.ts';
 import { inboxDir } from './library.ts';
 import type { Sheet } from './manifest.ts';
 import { blockingFindings, type Finding } from './secrets.ts';
-import { RefsError, errorMessage } from './util.ts';
+import { NudgeError, errorMessage } from './util.ts';
 
 export const BLOCKED_DIR = '_blocked';
 export const DUPLICATES_DIR = '_duplicates';
@@ -51,14 +51,14 @@ function stamp(): string {
 export function secretReason(inboxFile: string, format: string, findings: Finding[]): string {
   const blocking = blockingFindings(findings);
   const lines = [
-    `refs did not import this file (${stamp()}): likely secrets found.`,
+    `nudge did not import this file (${stamp()}): likely secrets found.`,
     format === 'md' || format === 'txt' ? '' : 'Line numbers refer to the text extracted from the file.',
     '',
     ...blocking.map((f) => `  ${f.n}. line ${f.line}  rule ${f.rule}  ${f.masked}`),
     '',
-    'Redact the secret and move the file back to the inbox; the next refs index imports it.',
+    'Redact the secret and move the file back to the inbox; the next nudge index imports it.',
     'If a finding is a false positive, move the file back to the inbox and run:',
-    `  refs allow "${inboxFile}" --finding <n>`,
+    `  nudge allow "${inboxFile}" --finding <n>`,
   ];
   return lines.filter((l, i) => l !== '' || lines[i - 1] !== '').join('\n') + '\n';
 }
@@ -82,9 +82,9 @@ function dropStaleReasons(library: string): void {
 }
 
 /**
- * Import every file at the top of inbox\ like refs add (moved, pending, own commit).
+ * Import every file at the top of inbox\ like nudge add (moved, pending, own commit).
  * Secrets and unreadable files go to _blocked, known content to _duplicates, each with a
- * reason file. Call with the refs.lock held.
+ * reason file. Call with the nudge.lock held.
  */
 export async function processInbox(library: string, opts: Pick<AddOptions, 'extract' | 'propose'>): Promise<InboxReport> {
   const report: InboxReport = { imported: [], blocked: [], duplicates: [], waiting: [], ignored: [] };
@@ -103,7 +103,7 @@ export async function processInbox(library: string, opts: Pick<AddOptions, 'extr
       const r = await importLocked(library, file, { ...opts, fromInbox: true, yes: true });
       if (r.kind === 'added') report.imported.push({ file, sheet: r.sheet, warnings: r.warnings, queued: r.queued });
       else if (r.kind === 'duplicate') {
-        const reason = `refs did not import this file (${stamp()}): same content as ${r.existing.id} "${r.existing.title}" (${r.existing.file}).\nDelete it, or keep it here; refs never touches it again.\n`;
+        const reason = `nudge did not import this file (${stamp()}): same content as ${r.existing.id} "${r.existing.title}" (${r.existing.file}).\nDelete it, or keep it here; nudge never touches it again.\n`;
         report.duplicates.push({ file, dest: park(library, file, DUPLICATES_DIR, reason), existing: r.existing.id });
       } else {
         const reason = secretReason(file, r.format, r.findings);
@@ -115,8 +115,8 @@ export async function processInbox(library: string, opts: Pick<AddOptions, 'extr
         report.waiting.push({ file, reason: message });
         continue;
       }
-      if (!(e instanceof RefsError)) throw e;
-      const reason = `refs did not import this file (${stamp()}): ${message}\nFix it and move it back to the inbox, or import it with refs add.\n`;
+      if (!(e instanceof NudgeError)) throw e;
+      const reason = `nudge did not import this file (${stamp()}): ${message}\nFix it and move it back to the inbox, or import it with nudge add.\n`;
       try {
         report.blocked.push({ file, dest: park(library, file, BLOCKED_DIR, reason), reason: message });
       } catch (moveError) {

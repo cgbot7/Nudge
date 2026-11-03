@@ -14,7 +14,7 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 ## 2. The library is a Git repo; everything else is derived
 
-**Decision.** Sheets live in a library folder that is its own Git repo, with `manifest.json` as the record of each sheet (`manifest.ts`). Import moves the original in and commits (`import.ts`, `git.ts`). The index, caches and usage log under `%LOCALAPPDATA%\refs` can be deleted; `refs index --rebuild` recreates them (`indexer.ts`). OCR text is the one slow result kept in the library (`ocr/<sha256>.txt`), so a rebuild never needs the vision model.
+**Decision.** Sheets live in a library folder that is its own Git repo, with `manifest.json` as the record of each sheet (`manifest.ts`). Import moves the original in and commits (`import.ts`, `git.ts`). The index, caches and usage log under `%LOCALAPPDATA%\nudge` can be deleted; `nudge index --rebuild` recreates them (`indexer.ts`). OCR text is the one slow result kept in the library (`ocr/<sha256>.txt`), so a rebuild never needs the vision model.
 
 **Why.** One copy of each sheet means nothing drifts, history and sync come free from Git, and a corrupt index is never a data loss.
 
@@ -46,15 +46,15 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 ## 6. No background service
 
-**Decision.** The prompt hook (`shell/refs-hook.ps1`) reads `hook-cache.json` and records the project you entered in `last-project.json`. `refs index` writes the cache with one project per line (`hookcache.ts` `serializeHookCache`), so the hook finds its project with a plain string search instead of parsing JSON. Task Scheduler runs `refs index` at logon and every 30 minutes. The popup is the only resident process, because a global hotkey needs one, and nothing else depends on it.
+**Decision.** The prompt hook (`shell/nudge-hook.ps1`) reads `hook-cache.json` and records the project you entered in `last-project.json`. `nudge index` writes the cache with one project per line (`hookcache.ts` `serializeHookCache`), so the hook finds its project with a plain string search instead of parsing JSON. Task Scheduler runs `nudge index` at logon and every 30 minutes. The popup is the only resident process, because a global hotkey needs one, and nothing else depends on it.
 
 **Why.** A prompt hook runs before every prompt, so it must be fast and must never break the shell. Avoiding a daemon means nothing to keep alive, update or debug.
 
-**Cost.** The cache can be up to 30 minutes behind; `refs scan .` refreshes one project at once, and an unknown project under a root triggers a hidden background scan. In a sandbox run the hook took a median 7.5 ms over 10 runs, but the first run in a fresh PowerShell session took 102 ms while the session warmed up.
+**Cost.** The cache can be up to 30 minutes behind; `nudge scan .` refreshes one project at once, and an unknown project under a root triggers a hidden background scan. In a sandbox run the hook took a median 7.5 ms over 10 runs, but the first run in a fresh PowerShell session took 102 ms while the session warmed up.
 
 ## 7. A secret scan on every import
 
-**Decision.** `secrets.ts` checks extracted text, OCR text included, for provider key formats, private key blocks, connection strings with passwords and high-entropy values assigned to names like `token`. A finding blocks the import; inbox files go to `_blocked` with a reason file naming the line and rule. A false positive can be allowlisted with `refs allow`, which stores a fingerprint of the matched text.
+**Decision.** `secrets.ts` checks extracted text, OCR text included, for provider key formats, private key blocks, connection strings with passwords and high-entropy values assigned to names like `token`. A finding blocks the import; inbox files go to `_blocked` with a reason file naming the line and rule. A false positive can be allowlisted with `nudge allow`, which stores a fingerprint of the matched text.
 
 **Why.** Imported files get committed to Git and sent to a model, so a leaked key would spread. Cheat sheets are full of example keys, so placeholders such as `sk-xxxx` and `<API_KEY>` are ignored.
 
@@ -62,7 +62,7 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 ## 8. One writer at a time
 
-**Decision.** Every write to the library or the derived data goes through `lock.ts` (`acquireLock` on `refs.lock`), and caches are written to a temp file and renamed (`util.ts` `writeFileAtomic`). A scheduled index that finds the lock taken exits quietly, the CLI waits up to 10 s, and the popup waits 2 s and then shows "busy".
+**Decision.** Every write to the library or the derived data goes through `lock.ts` (`acquireLock` on `nudge.lock`), and caches are written to a temp file and renamed (`util.ts` `writeFileAtomic`). A scheduled index that finds the lock taken exits quietly, the CLI waits up to 10 s, and the popup waits 2 s and then shows "busy".
 
 **Why.** The scheduled task, the CLI, the MCP server and the popup can all run at the same time. Readers such as the prompt hook must never see a half-written file.
 
@@ -70,9 +70,9 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 ## 9. Popup: Tauri for the window, Node for the logic
 
-**Decision.** `apps/popup` is a Tauri v2 tray app whose Rust code (`src-tauri/src/main.rs`) owns only the tray, the global shortcut and the window, and keeps a Node sidecar (`packages/sidecar`) alive. They exchange JSON lines over stdio, and the sidecar reuses `@refs/core` for search, preview and the learned, verify and approve actions. The window is created hidden and already rendered at startup. Keystrokes get a keyword pass at once and a hybrid pass after a 250 ms pause, with sequence numbers so older replies are dropped (`apps/popup/src/logic.ts` `SearchScheduler`).
+**Decision.** `apps/popup` is a Tauri v2 tray app whose Rust code (`src-tauri/src/main.rs`) owns only the tray, the global shortcut and the window, and keeps a Node sidecar (`packages/sidecar`) alive. They exchange JSON lines over stdio, and the sidecar reuses `@nudge/core` for search, preview and the learned, verify and approve actions. The window is created hidden and already rendered at startup. Keystrokes get a keyword pass at once and a hybrid pass after a 250 ms pause, with sequence numbers so older replies are dropped (`apps/popup/src/logic.ts` `SearchScheduler`).
 
-**Why.** No logic is written twice in Rust. Keeping the window pre-rendered met the 300 ms budget by a wide margin: 8 ms from hotkey to visible, measured from outside the app. The sidecar opens `index.db` per request, so `refs index --rebuild` can replace the file while the popup runs.
+**Why.** No logic is written twice in Rust. Keeping the window pre-rendered met the 300 ms budget by a wide margin: 8 ms from hotkey to visible, measured from outside the app. The sidecar opens `index.db` per request, so `nudge index --rebuild` can replace the file while the popup runs.
 
 **Cost.** Building the popup needs a Rust toolchain and the MSVC build tools, and Windows Smart App Control blocks the unsigned programs a Rust build produces. The popup holds one Node process for its whole lifetime.
 
@@ -86,7 +86,7 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 ## 11. Installer as a plan, then an apply
 
-**Decision.** `refs install` first builds a plan (`install.ts` `planInstall`, `agents.ts` `planAgents`, `install.ts` `planPopupLogon`) and prints every change: the profile block, the scheduled task, the PATH entry, the Claude Code hook and MCP server, the OpenCode config and plugin, and the Run value that starts the popup at logon. `--dry-run` stops there; otherwise it asks before applying. Each step is idempotent, writes a backup first, and refuses to rewrite files it cannot parse, such as JSON with comments. All machine access goes through a `SystemOps` interface.
+**Decision.** `nudge install` first builds a plan (`install.ts` `planInstall`, `agents.ts` `planAgents`, `install.ts` `planPopupLogon`) and prints every change: the profile block, the scheduled task, the PATH entry, the Claude Code hook and MCP server, the OpenCode config and plugin, and the Run value that starts the popup at logon. `--dry-run` stops there; otherwise it asks before applying. Each step is idempotent, writes a backup first, and refuses to rewrite files it cannot parse, such as JSON with comments. All machine access goes through a `SystemOps` interface.
 
 **Why.** It edits files and settings that belong to other tools, so you should see exactly what changes, and running it twice must not duplicate anything. The `SystemOps` seam lets tests plan and apply against a fake machine.
 

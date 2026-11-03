@@ -35,7 +35,7 @@ const SYSTEM_PROMPT = [
 export type ProposeOutcome =
   /** A proposal, or a proposal with `error` when the model gave no usable answer twice. */
   | { kind: 'proposal'; proposal: Proposal }
-  /** Ollama is down or the model is missing: try again on a later refs index. */
+  /** Ollama is down or the model is missing: try again on a later nudge index. */
   | { kind: 'queued'; reason: string };
 
 export type ProposeFn = (input: { filename: string; text: string }) => Promise<ProposeOutcome>;

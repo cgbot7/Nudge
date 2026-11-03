@@ -33,7 +33,7 @@ export const DEAD_OLLAMA = 'http://127.0.0.1:9';
 
 /** Sandboxes never use the real Ollama: they get DEAD_OLLAMA unless a test passes its fake server's URL. */
 export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, unknown> } = {}): TestEnv {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-test-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nudge-test-'));
   sandboxes.push(root);
   const library = path.join(root, 'library');
   const work = path.join(root, 'work dir & more');
@@ -41,25 +41,25 @@ export function setupEnv(opts: { ollamaHost?: string; ollama?: Record<string, un
   const env: NodeJS.ProcessEnv = {
     APPDATA: path.join(root, 'appdata'),
     LOCALAPPDATA: path.join(root, 'localappdata'),
-    GIT_AUTHOR_NAME: 'refs test',
-    GIT_AUTHOR_EMAIL: 'refs-test@localhost',
-    GIT_COMMITTER_NAME: 'refs test',
-    GIT_COMMITTER_EMAIL: 'refs-test@localhost',
+    GIT_AUTHOR_NAME: 'nudge test',
+    GIT_AUTHOR_EMAIL: 'nudge-test@localhost',
+    GIT_COMMITTER_NAME: 'nudge test',
+    GIT_COMMITTER_EMAIL: 'nudge-test@localhost',
     NO_COLOR: '1',
-    // Keep refs install and refs doctor away from the real profiles and scheduled task.
-    REFS_DOCUMENTS_DIR: path.join(root, 'documents'),
-    REFS_TASK_NAME: `refs-test-${path.basename(root)}`,
+    // Keep nudge install and nudge doctor away from the real profiles and scheduled task.
+    NUDGE_DOCUMENTS_DIR: path.join(root, 'documents'),
+    NUDGE_TASK_NAME: `nudge-test-${path.basename(root)}`,
     // Fake home for Claude Code and OpenCode configs; the real ones are never read or written.
-    REFS_HOME_DIR: path.join(root, 'home'),
+    NUDGE_HOME_DIR: path.join(root, 'home'),
     // The popup's logon entry goes to a scratch key, and doctor looks for a popup that is not there.
-    REFS_RUN_KEY: `HKCU\\Software\\refs-test\\${path.basename(root)}`,
-    REFS_RUN_VALUE_NAME: 'refs popup test',
-    REFS_POPUP_EXE: path.join(root, 'popup', 'refs-popup.exe'),
+    NUDGE_RUN_KEY: `HKCU\\Software\\nudge-test\\${path.basename(root)}`,
+    NUDGE_RUN_VALUE_NAME: 'nudge popup test',
+    NUDGE_POPUP_EXE: path.join(root, 'popup', 'nudge-popup.exe'),
   };
   Object.assign(process.env, env);
-  fs.mkdirSync(path.join(env.APPDATA!, 'refs'), { recursive: true });
+  fs.mkdirSync(path.join(env.APPDATA!, 'nudge'), { recursive: true });
   const ollama = { host: opts.ollamaHost ?? DEAD_OLLAMA, embedModel: 'fake-embed', chatModel: 'fake-chat', visionModel: 'fake-vision', ...opts.ollama };
-  fs.writeFileSync(path.join(env.APPDATA!, 'refs', 'config.json'), JSON.stringify({ library: library.replace(/\\/g, '/'), ollama }));
+  fs.writeFileSync(path.join(env.APPDATA!, 'nudge', 'config.json'), JSON.stringify({ library: library.replace(/\\/g, '/'), ollama }));
   return { root, library, work, env: { ...process.env, ...env } };
 }
 
@@ -79,7 +79,7 @@ export function fakeSystem(documents: string, opts: { policy?: string; pwsh?: bo
   let pathValue = opts.path === undefined ? '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps' : opts.path;
   let task = opts.taskExists ?? false;
   let taskXml: string | null = task ? '<Task><Command>other.exe</Command></Task>' : null;
-  const claudeJson = () => path.join(process.env.REFS_HOME_DIR!, '.claude.json');
+  const claudeJson = () => path.join(process.env.NUDGE_HOME_DIR!, '.claude.json');
   const sys = {
     info: () => ({
       documents,

@@ -42,7 +42,7 @@ export async function runDoctor(sys: SystemOps = realSystem()): Promise<Check[]>
   try {
     const loaded = loadConfig();
     config = loaded.config;
-    add(loaded.exists ? 'ok' : 'warn', 'config', loaded.exists ? loaded.path : `${loaded.path} not found; using defaults (written on first refs add)`);
+    add(loaded.exists ? 'ok' : 'warn', 'config', loaded.exists ? loaded.path : `${loaded.path} not found; using defaults (written on first nudge add)`);
   } catch (e) {
     add('fail', 'config', errorMessage(e));
     return checks;
@@ -72,8 +72,8 @@ async function popupChecks(config: Config, add: Add, sys: SystemOps): Promise<vo
   try {
     const { popupLogon } = installStatus(sys);
     if (popupLogon.current) add('ok', 'logon', `"${runValueName()}" in ${runKey()} starts this popup`);
-    else if (popupLogon.value === null) add('warn', 'logon', `the popup does not start at logon ("${runValueName()}" is not in ${runKey()}); run refs install`);
-    else add('warn', 'logon', `"${runValueName()}" in ${runKey()} starts something else (${popupLogon.value}); run refs install to update it`);
+    else if (popupLogon.value === null) add('warn', 'logon', `the popup does not start at logon ("${runValueName()}" is not in ${runKey()}); run nudge install`);
+    else add('warn', 'logon', `"${runValueName()}" in ${runKey()} starts something else (${popupLogon.value}); run nudge install to update it`);
   } catch (e) {
     add('warn', 'logon', errorMessage(e));
   }
@@ -86,7 +86,7 @@ async function popupChecks(config: Config, add: Add, sys: SystemOps): Promise<vo
   add(ping.ok ? 'ok' : 'fail', 'sidecar', ping.ok ? `starts and answers ping in ${ping.ms} ms` : `${sidecar}: ${ping.error}`);
 }
 
-export const MCP_TOOLS = ['refs_search', 'refs_get', 'refs_for_project'];
+export const MCP_TOOLS = ['nudge_search', 'nudge_get', 'nudge_for_project'];
 
 async function agentChecks(add: Add, sys: SystemOps): Promise<void> {
   const t = agentTargets();
@@ -106,16 +106,16 @@ async function agentChecks(add: Add, sys: SystemOps): Promise<void> {
   }
   if (!claude && !fs.existsSync(paths.claudeDir)) add('ok', 'claude', 'Claude Code not found; skipped');
   else {
-    add(status.claudeHook ? 'ok' : 'warn', 'claude', status.claudeHook ? `SessionStart hook in ${paths.claudeSettings}` : `no current refs SessionStart hook in ${paths.claudeSettings}; run refs install`);
+    add(status.claudeHook ? 'ok' : 'warn', 'claude', status.claudeHook ? `SessionStart hook in ${paths.claudeSettings}` : `no current nudge SessionStart hook in ${paths.claudeSettings}; run nudge install`);
     if (status.claudeMcp.error) add('warn', 'claude', status.claudeMcp.error);
-    else if (!status.claudeMcp.present) add('warn', 'claude', `MCP server "refs" not registered at user scope (${paths.claudeJson}); run refs install`);
-    else if (!status.claudeMcp.current) add('warn', 'claude', 'MCP server "refs" points at another checkout or Node; run refs install to update it');
-    else add('ok', 'claude', `MCP server "refs" registered at user scope`);
+    else if (!status.claudeMcp.present) add('warn', 'claude', `MCP server "nudge" not registered at user scope (${paths.claudeJson}); run nudge install`);
+    else if (!status.claudeMcp.current) add('warn', 'claude', 'MCP server "nudge" points at another checkout or Node; run nudge install to update it');
+    else add('ok', 'claude', `MCP server "nudge" registered at user scope`);
   }
   if (!status.opencode.installed) add('ok', 'opencode', `${paths.opencodeDir} not found; skipped`);
   else {
-    add(status.opencode.mcp ? 'ok' : 'warn', 'opencode', status.opencode.mcp ? `MCP server "refs" in ${paths.opencodeConfig}` : `MCP server "refs" not registered in ${paths.opencodeConfig}; run refs install`);
-    add(status.opencode.plugin ? 'ok' : 'warn', 'opencode', status.opencode.plugin ? `session index plugin ${paths.opencodePlugin}` : `session index plugin missing or out of date (${paths.opencodePlugin}); run refs install`);
+    add(status.opencode.mcp ? 'ok' : 'warn', 'opencode', status.opencode.mcp ? `MCP server "nudge" in ${paths.opencodeConfig}` : `MCP server "nudge" not registered in ${paths.opencodeConfig}; run nudge install`);
+    add(status.opencode.plugin ? 'ok' : 'warn', 'opencode', status.opencode.plugin ? `session index plugin ${paths.opencodePlugin}` : `session index plugin missing or out of date (${paths.opencodePlugin}); run nudge install`);
   }
 }
 
@@ -124,7 +124,7 @@ async function ollamaChecks(config: Config, add: Add): Promise<void> {
   const client = ollamaClient(config.ollama);
   const health = await client.health();
   if (!health.ok) {
-    add('warn', 'ollama', `${health.reason}. Search falls back to keyword only; tagging and OCR wait for a later refs index`);
+    add('warn', 'ollama', `${health.reason}. Search falls back to keyword only; tagging and OCR wait for a later nudge index`);
     return;
   }
   add('ok', 'ollama', `version ${health.version} at ${host}`);
@@ -157,7 +157,7 @@ function aiLibraryChecks(config: Config, add: Add): void {
   add(counts.blocked ? 'warn' : 'ok', 'inbox', counts.blocked ? `${inboxDetail}; see the reason files in inbox\_blocked` : inboxDetail);
   try {
     const pending = readManifest(library).filter((s) => s.status === 'pending');
-    if (pending.length) add('warn', 'review', `${pending.length} pending sheet${pending.length === 1 ? '' : 's'} waiting for refs review`);
+    if (pending.length) add('warn', 'review', `${pending.length} pending sheet${pending.length === 1 ? '' : 's'} waiting for nudge review`);
     else add('ok', 'review', 'nothing waiting');
   } catch {
     // The manifest check above already failed.
@@ -171,10 +171,10 @@ function aiLibraryChecks(config: Config, add: Add): void {
       const model = config.ollama.embedModel;
       const { sections, embedded } = embeddingCoverage(db, model);
       const others = embeddingModels(db).filter((m) => m !== model);
-      if (others.length) add('warn', 'vectors', `vectors from ${others.join(', ')} are replaced by ${model} on the next refs index`);
+      if (others.length) add('warn', 'vectors', `vectors from ${others.join(', ')} are replaced by ${model} on the next nudge index`);
       if (!sections) add('ok', 'vectors', 'no sections yet');
       else if (embedded === sections) add('ok', 'vectors', `${embedded} of ${sections} sections embedded with ${model}`);
-      else add('warn', 'vectors', `${embedded} of ${sections} sections embedded with ${model}; refs index embeds the rest (needs Ollama)`);
+      else add('warn', 'vectors', `${embedded} of ${sections} sections embedded with ${model}; nudge index embeds the rest (needs Ollama)`);
     } finally {
       db.close();
     }
@@ -185,7 +185,7 @@ function aiLibraryChecks(config: Config, add: Add): void {
 
 function libraryChecks(library: string, add: Add): void {
   if (!fs.existsSync(library)) {
-    add('warn', 'library', `${library} does not exist yet; refs add <file> creates it`);
+    add('warn', 'library', `${library} does not exist yet; nudge add <file> creates it`);
     return;
   }
   add(isRepoRoot(library) ? 'ok' : 'fail', 'library', isRepoRoot(library) ? library : `${library} is not a Git repo root`);
@@ -195,7 +195,7 @@ function libraryChecks(library: string, add: Add): void {
     readTagVocab(library);
     readGapIgnores(library);
     if (fs.existsSync(rulesPath(library))) add('ok', 'rules', `rules.json valid (${rules.length} rules)`);
-    else add('warn', 'rules', 'rules.json not in the library yet; refs index writes the defaults');
+    else add('warn', 'rules', 'rules.json not in the library yet; nudge index writes the defaults');
   } catch (e) {
     add('fail', 'rules', errorMessage(e));
   }
@@ -221,14 +221,14 @@ function libraryChecks(library: string, add: Add): void {
   const unknown = fs.existsSync(sheetsDir)
     ? fs.readdirSync(sheetsDir).filter((f) => !f.startsWith('~$') && !known.has(pathKey(path.join(sheetsDir, f))))
     : [];
-  if (missing.length) add('fail', 'files', `missing from the library: ${list(missing)} (renamed or deleted outside refs, and no file with the same content was found by refs index)`);
-  if (changed.length) add('warn', 'files', `edited since the last index: ${list(changed)}; run refs index`);
+  if (missing.length) add('fail', 'files', `missing from the library: ${list(missing)} (renamed or deleted outside nudge, and no file with the same content was found by nudge index)`);
+  if (changed.length) add('warn', 'files', `edited since the last index: ${list(changed)}; run nudge index`);
   if (unknown.length) add('warn', 'files', `in sheets\\ but not in manifest.json: ${list(unknown)}`);
   if (!missing.length && !changed.length && !unknown.length) add('ok', 'files', 'manifest matches the library files');
 
   const dbFile = dataPaths().db;
   if (!fs.existsSync(dbFile)) {
-    add(sheets.length ? 'warn' : 'ok', 'index', sheets.length ? `${dbFile} is missing; run refs index --rebuild` : 'empty (no sheets yet)');
+    add(sheets.length ? 'warn' : 'ok', 'index', sheets.length ? `${dbFile} is missing; run nudge index --rebuild` : 'empty (no sheets yet)');
     return;
   }
   try {
@@ -256,10 +256,10 @@ function hookChecks(config: Config, add: Add, sys: SystemOps): void {
   }
 
   const cacheFile = dataPaths().hookCache;
-  if (!fs.existsSync(cacheFile)) add('warn', 'cache', `${cacheFile} is missing; run refs index (the hook prints nothing until then)`);
+  if (!fs.existsSync(cacheFile)) add('warn', 'cache', `${cacheFile} is missing; run nudge index (the hook prints nothing until then)`);
   else {
     const cache = readHookCache();
-    if (!cache) add('fail', 'cache', `${cacheFile} is unreadable; run refs index to rewrite it (the hook prints nothing meanwhile)`);
+    if (!cache) add('fail', 'cache', `${cacheFile} is unreadable; run nudge index to rewrite it (the hook prints nothing meanwhile)`);
     else add('ok', 'cache', `${cache.projects.length} project${cache.projects.length === 1 ? '' : 's'}, written ${cache.generatedAt}`);
   }
 
@@ -270,12 +270,12 @@ function hookChecks(config: Config, add: Add, sys: SystemOps): void {
     add('warn', 'hook', errorMessage(e));
     return;
   }
-  if (!status.hookIn.length) add('warn', 'hook', 'not in any PowerShell profile; run refs install');
+  if (!status.hookIn.length) add('warn', 'hook', 'not in any PowerShell profile; run nudge install');
   else {
     const only51 = status.hookIn.every((f) => /[\\/]WindowsPowerShell[\\/]/i.test(f));
     const blocked = !/^(RemoteSigned|Unrestricted|Bypass)$/i.test(status.info.executionPolicy);
     if (only51 && blocked) add('warn', 'hook', `only in the 5.1 profile, and its execution policy (${status.info.executionPolicy}) stops profiles from loading`);
     else add('ok', 'hook', `in ${status.hookIn.join(', ')}`);
   }
-  add(status.scheduled ? 'ok' : 'warn', 'schedule', status.scheduled ? `task "${taskName()}" registered` : `task "${taskName()}" not registered; run refs install`);
+  add(status.scheduled ? 'ok' : 'warn', 'schedule', status.scheduled ? `task "${taskName()}" registered` : `task "${taskName()}" not registered; run nudge install`);
 }

@@ -10,9 +10,9 @@ import { isStale } from './manifest.ts';
 import { OllamaError, isOllamaDown, ollamaClient, type OllamaClient } from './ollama.ts';
 import { dataPaths, normPath, pathKey } from './paths.ts';
 import { detectTags, readRules } from './rules.ts';
-import { RefsError, decodeText, errorMessage, normalizeTag, slugify, today, writeFileAtomic } from './util.ts';
+import { NudgeError, decodeText, errorMessage, normalizeTag, slugify, today, writeFileAtomic } from './util.ts';
 
-// refs suggest: the chat model proposes sheets worth writing for a project. Project files
+// nudge suggest: the chat model proposes sheets worth writing for a project. Project files
 // (README, manifests) are untrusted: they go to the model wrapped as data, the reply must
 // match SuggestReplySchema, anything else is discarded, and nothing it returns is run.
 
@@ -94,7 +94,7 @@ function packageSummary(text: string): string {
 /** Tags, gaps, existing sheets and file excerpts for the project at `dir`. No model call. */
 export function projectFacts(config: Config, dir: string): ProjectFacts {
   const abs = path.resolve(dir);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new RefsError(`not a folder: ${abs}`);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new NudgeError(`not a folder: ${abs}`);
   const rules = readRules(config.library);
   const project = resolveProjectRoot(abs, config.roots, rules) ?? normPath(abs);
   const ctx = statsContext(config);
@@ -159,15 +159,15 @@ export interface SuggestOutcome {
 
 /**
  * Validated recommendations for a project. A reply that is not JSON in the schema gets one
- * retry at temperature 0; after that refs gives up with an error. Valid items are kept only
+ * retry at temperature 0; after that nudge gives up with an error. Valid items are kept only
  * when they carry a project tag and do not repeat an existing sheet or another item.
  */
 export async function suggestForProject(config: Config, dir: string, client: OllamaClient = ollamaClient(config.ollama)): Promise<SuggestOutcome> {
   const started = performance.now();
   const health = await client.health();
-  if (!health.ok) throw new RefsError(`refs suggest needs the chat model, and ${health.reason}. Start Ollama and try again.`);
+  if (!health.ok) throw new NudgeError(`nudge suggest needs the chat model, and ${health.reason}. Start Ollama and try again.`);
   const facts = projectFacts(config, dir);
-  if (!facts.tags.length) throw new RefsError(`no tags detected for ${facts.project}, so there is nothing to suggest from. Add a rule to rules.json.`);
+  if (!facts.tags.length) throw new NudgeError(`no tags detected for ${facts.project}, so there is nothing to suggest from. Add a rule to rules.json.`);
   const model = config.ollama.chatModel;
 
   const user = [
@@ -194,7 +194,7 @@ export async function suggestForProject(config: Config, dir: string, client: Oll
         ],
       });
     } catch (e) {
-      if (isOllamaDown(e) || (e instanceof OllamaError && e.kind === 'model-missing')) throw new RefsError(`refs suggest needs the chat model: ${errorMessage(e)}`);
+      if (isOllamaDown(e) || (e instanceof OllamaError && e.kind === 'model-missing')) throw new NudgeError(`nudge suggest needs the chat model: ${errorMessage(e)}`);
       lastProblem = errorMessage(e);
       continue;
     }
@@ -205,7 +205,7 @@ export async function suggestForProject(config: Config, dir: string, client: Oll
     }
     lastProblem = 'the reply was not JSON in the expected shape';
   }
-  if (!reply) throw new RefsError(`the model gave no usable suggestions twice (${lastProblem}); nothing to show. Try again, or try another chatModel.`);
+  if (!reply) throw new NudgeError(`the model gave no usable suggestions twice (${lastProblem}); nothing to show. Try again, or try another chatModel.`);
 
   const ctx = statsContext(config);
   const projectSet = new Set(facts.tags);
@@ -231,8 +231,8 @@ export async function suggestForProject(config: Config, dir: string, client: Oll
   return { facts, model, suggestions: suggestions.slice(0, MAX_SUGGESTIONS), discarded, attempts, tookMs: Math.round(performance.now() - started) };
 }
 
-// The last list is kept in %LOCALAPPDATA%\refs\suggestions.json so refs suggest --save <n>
-// saves exactly what was shown. Losing it loses nothing: run refs suggest again.
+// The last list is kept in %LOCALAPPDATA%\nudge\suggestions.json so nudge suggest --save <n>
+// saves exactly what was shown. Losing it loses nothing: run nudge suggest again.
 
 export interface SavedSuggestions {
   project: string;
@@ -255,7 +255,7 @@ export function saveSuggestions(outcome: SuggestOutcome): void {
   writeFileAtomic(dataPaths().suggestions, JSON.stringify(saved, null, 2) + '\n');
 }
 
-/** The saved list for the project at `dir`, or null when the last refs suggest was for another project. */
+/** The saved list for the project at `dir`, or null when the last nudge suggest was for another project. */
 export function loadSuggestions(config: Config, dir: string): SavedSuggestions | null {
   let saved: SavedSuggestions;
   try {

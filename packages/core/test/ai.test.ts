@@ -39,7 +39,7 @@ async function withOcr(opts: Parameters<typeof addFile>[2] = {}): Promise<Parame
 }
 
 function setConfig(patch: (c: Record<string, any>) => void): void {
-  const file = path.join(t.env.APPDATA!, 'refs', 'config.json');
+  const file = path.join(t.env.APPDATA!, 'nudge', 'config.json');
   const c = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, any>;
   patch(c);
   fs.writeFileSync(file, JSON.stringify(c));
@@ -66,7 +66,7 @@ function gitClean(): string {
 
 const OLLAMA_SHOT = 'ollama pull llama3.2\npulling manifest\nverifying sha256 digest\nwriting manifest\nsuccess';
 
-test('refs index embeds every section, stores the model name, and only re-embeds changed text', async () => {
+test('nudge index embeds every section, stores the model name, and only re-embeds changed text', async () => {
   const r = await addFile(t.library, write(t.work, 'docker-notes.md', DOCKER_MD), { tags: ['docker'] });
   assert.equal(r.kind, 'added');
   let report = (await runIndex(cfg()))!;
@@ -222,7 +222,7 @@ test('inbox: clean files import as pending with a commit each, secrets go to _bl
   assert.deepEqual(sheets[1]!.proposal?.tags, ['ollama', 'llm']);
   assert.deepEqual(sheets[1]!.proposal?.newTags, ['llm']);
   assert.equal(sheets[1]!.ocr?.model, 'fake-vision');
-  assert.deepEqual(gitLog().slice(0, 2), ['refs: add s_0002 Ollama pull', 'refs: add s_0001 Docker basics']);
+  assert.deepEqual(gitLog().slice(0, 2), ['nudge: add s_0002 Ollama pull', 'nudge: add s_0001 Docker basics']);
   assert.equal(gitClean(), '', 'inbox is ignored and every import is committed');
 
   const blocked = path.join(inbox, '_blocked', 'git-tips.docx');
@@ -245,7 +245,7 @@ test('inbox: clean files import as pending with a commit each, secrets go to _bl
   assert.deepEqual(inboxCounts(t.library), { waiting: 0, blocked: 0, duplicates: 1 });
 });
 
-test('refs review: accepting makes a sheet verified today, applies the proposal and adds new tags to tags.json', async () => {
+test('nudge review: accepting makes a sheet verified today, applies the proposal and adds new tags to tags.json', async () => {
   write(path.join(t.library, 'inbox'), 'docker-notes.md', DOCKER_MD);
   fake.chatReplies.push(JSON.stringify({ title: 'Docker container basics', tags: ['docker', 'container-cleanup'] }));
   await runIndex(cfg());
@@ -259,7 +259,7 @@ test('refs review: accepting makes a sheet verified today, applies the proposal 
   assert.equal(saved.status, 'verified');
   assert.equal(saved.proposal, undefined);
   assert.ok('container-cleanup' in JSON.parse(fs.readFileSync(path.join(t.library, 'tags.json'), 'utf8')));
-  assert.match(gitLog()[0]!, /refs: review s_0001 \(verified: docker, container-cleanup\)/);
+  assert.match(gitLog()[0]!, /nudge: review s_0001 \(verified: docker, container-cleanup\)/);
   await assert.rejects(acceptReview(cfg(), 's_0001'), /not pending/);
 });
 
@@ -328,11 +328,11 @@ test('Ollama down: text imports still move and keyword-index, images wait; a lat
   assert.deepEqual(report.inbox.imported.map((i) => path.basename(i.file)), ['ollama-pull.png']);
   assert.deepEqual(report.retag?.proposed, ['s_0001']);
   assert.deepEqual(readManifest(t.library)[0]!.proposal?.tags, ['docker']);
-  assert.match(gitLog()[0]!, /refs: tag proposals for s_0001/);
+  assert.match(gitLog()[0]!, /nudge: tag proposals for s_0001/);
   assert.equal((await search('download a model')).hits[0]?.id, 's_0002');
 });
 
-test('refs index --rebuild re-embeds from the library alone and gives the same results, without OCR again', async () => {
+test('nudge index --rebuild re-embeds from the library alone and gives the same results, without OCR again', async () => {
   fake.ocr = () => OLLAMA_SHOT;
   await addFile(t.library, write(t.work, 'docker-notes.md', DOCKER_MD), { tags: ['docker'] });
   await addFile(t.library, write(t.work, 'ollama-pull.png', 'png'), await withOcr({ tags: ['ollama'] }));

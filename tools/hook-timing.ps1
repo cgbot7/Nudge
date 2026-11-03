@@ -1,4 +1,4 @@
-# Times the refs prompt hook inside one PowerShell session. Run by tools\bench.ts with
+# Times the nudge prompt hook inside one PowerShell session. Run by tools\bench.ts with
 # LOCALAPPDATA pointing at a sandbox whose hook-cache.json knows the two projects.
 #
 # first:     the first hook call in this session (cold: .NET and regex warm-up)
@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $sw = [Diagnostics.Stopwatch]::new()
 function Measure-Hook {
     $sw.Restart()
-    Invoke-RefsHook 6>$null
+    Invoke-NudgeHook 6>$null
     $sw.Stop()
     return $sw.Elapsed.TotalMilliseconds
 }
@@ -37,9 +37,9 @@ for ($i = 0; $i -lt $Runs; $i++) {
 
 # The line the hook printed for the last project entered, to prove it did real work.
 Set-Location -LiteralPath $ProjectB
-Invoke-RefsHook 6>$null
+Invoke-NudgeHook 6>$null
 Set-Location -LiteralPath $ProjectA
-$line = (Invoke-RefsHook 6>&1 | Out-String).Trim()
+$line = (Invoke-NudgeHook 6>&1 | Out-String).Trim()
 
 [ordered]@{
     first     = $first

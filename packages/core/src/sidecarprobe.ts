@@ -8,7 +8,7 @@ export interface SidecarPing {
 
 /**
  * Start the popup's sidecar the way the popup does (node.exe plus its script, JSON lines on
- * stdio), send one ping and wait for the pong. refs doctor uses it; nothing else needs it.
+ * stdio), send one ping and wait for the pong. nudge doctor uses it; nothing else needs it.
  */
 export function pingSidecar(node: string, script: string, opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<SidecarPing> {
   const started = performance.now();

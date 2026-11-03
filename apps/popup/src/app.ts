@@ -232,7 +232,7 @@ export const App = defineComponent({
         }
       }
       if (!hello) {
-        state.problems.push('The sidecar did not start; see %LOCALAPPDATA%\\refs\\logs\\popup.log');
+        state.problems.push('The sidecar did not start; see %LOCALAPPDATA%\\nudge\\logs\\popup.log');
         return;
       }
       if (hello.configError) state.problems.push(hello.configError);

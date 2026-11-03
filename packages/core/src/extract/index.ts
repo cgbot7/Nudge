@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { SheetFormat } from '../manifest.ts';
-import { RefsError, errorMessage } from '../util.ts';
+import { NudgeError, errorMessage } from '../util.ts';
 import { ocrImage, type Ocr } from './image.ts';
 import { extractMarkdown, extractPlainText } from './markdown.ts';
 
@@ -68,8 +68,8 @@ export async function extract(format: SheetFormat, buf: Buffer, opts: ExtractOpt
       }
     }
   } catch (e) {
-    if (e instanceof RefsError) throw e;
-    throw new RefsError(`could not extract text from this ${format.toUpperCase()} file: ${errorMessage(e)}`);
+    if (e instanceof NudgeError) throw e;
+    throw new NudgeError(`could not extract text from this ${format.toUpperCase()} file: ${errorMessage(e)}`);
   }
 }
 
@@ -89,7 +89,7 @@ async function ocrPdfPages(buf: Buffer, pages: string[], empty: number[], opts: 
   let todo = empty;
   if (empty.length > max) {
     if (opts.confirmPartialOcr && !(await opts.confirmPartialOcr(empty.length, max))) {
-      throw new RefsError(`cancelled; ${empty.length} scanned pages is more than ocrMaxPages (${max}). Nothing changed.`);
+      throw new NudgeError(`cancelled; ${empty.length} scanned pages is more than ocrMaxPages (${max}). Nothing changed.`);
     }
     todo = empty.slice(0, max);
     warnings.push(`${empty.length} pages have no text layer; only the first ${max} were OCR'd (ocrMaxPages). The rest are not searchable and were not secret-scanned.`);
