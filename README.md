@@ -212,3 +212,7 @@ Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Ba
 - [docs/architecture.md](docs/architecture.md): components, entry points, data model, files on disk and trust boundaries, with diagrams.
 - [docs/decisions.md](docs/decisions.md): design decisions, with the reason and cost of each.
 - [SPEC.md](SPEC.md): the original specification the five milestones were built from.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
