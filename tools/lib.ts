@@ -117,12 +117,12 @@ export function environment(): Record<string, string> {
   };
 }
 
-/** Results go to docs/results/<kind>-<yyyy-mm-dd-hhmm>.json (UTC), one file per run; returns the path written. */
+/** Results go to docs/results/<kind>-<yyyy-mm-dd-hhmmss>.json (UTC), one file per run; returns the path written. */
 export function saveResult(kind: string, data: unknown): string {
   const dir = path.join(REPO, 'docs', 'results');
   fs.mkdirSync(dir, { recursive: true });
   const at = new Date().toISOString();
-  const file = path.join(dir, `${kind}-${at.slice(0, 10)}-${at.slice(11, 13)}${at.slice(14, 16)}.json`);
+  const file = path.join(dir, `${kind}-${at.slice(0, 10)}-${at.slice(11, 19).replace(/:/g, '')}.json`);
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
   return file;
 }

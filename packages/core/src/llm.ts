@@ -24,7 +24,12 @@ const SYSTEM_PROMPT = [
   'title: a short descriptive title of at most 8 words, plain punctuation, no dashes used as commas.',
   `tags: 1 to ${MAX_TAGS} lowercase kebab-case tags naming technologies or topics (for example docker, git, ollama),`,
   'not generic words such as notes, tips, commands or cheatsheet.',
-  'Strongly prefer tags from the existing vocabulary; add a new tag only when none of them fits.',
+  'The first tag names the main subject of the document (the tool, technology or topic it is about),',
+  'even when that tag is not in the existing vocabulary; a subject of several words becomes one tag (for example github-actions).',
+  'Add further tags only for other technologies the document is mainly about. A shell, language or operating system that the',
+  'examples merely run in is not a tag.',
+  'Use the existing vocabulary to spell a tag the way the library already does (node, not nodejs), and reuse a vocabulary tag',
+  'when it means the same thing; never replace the main subject with a related vocabulary tag.',
 ].join('\n');
 
 export type ProposeOutcome =

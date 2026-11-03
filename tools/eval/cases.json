@@ -1,5 +1,5 @@
 {
-  "about": "Labeled cases for tools/eval.ts. Retrieval queries name the corpus file and the section heading(s) that answer them; kind is lexical (shares words with the section) or paraphrase (says it differently). Floors are regression floors set from the first real run, not targets.",
+  "about": "Labeled cases for tools/eval.ts. Retrieval queries name the corpus file and the section heading(s) that answer them; kind is lexical (shares words with the section) or paraphrase (says it differently). Sheets outside the default tag vocabulary (regex, task-scheduler, nginx, ffmpeg, winget, kubernetes) test that the tagger names new topics. Floors are regression floors set from the first real run, not targets.",
   "retrieval": [
     { "q": "docker compose up in the background", "kind": "lexical", "expect": [["docker.md", "Compose"]] },
     { "q": "remove all stopped containers", "kind": "lexical", "expect": [["docker.md", "Containers"]] },
@@ -40,7 +40,15 @@
     { "q": "named capture group", "kind": "lexical", "expect": [["regex.md", "Groups"]] },
     { "q": "run a script when I sign in to Windows", "kind": "paraphrase", "expect": [["task-scheduler.md", "Create a task"]] },
     { "q": "repeat every 30 minutes", "kind": "lexical", "expect": [["task-scheduler.md", "Repeat every few minutes"]] },
-    { "q": "stop the console window from flashing", "kind": "lexical", "expect": [["task-scheduler.md", "Hide the window"]] }
+    { "q": "stop the console window from flashing", "kind": "lexical", "expect": [["task-scheduler.md", "Hide the window"]] },
+    { "q": "nginx proxy_pass to a local app", "kind": "lexical", "expect": [["nginx.md", "Reverse proxy"]] },
+    { "q": "apply a new web server config without dropping visitors", "kind": "paraphrase", "expect": [["nginx.md", "Test and reload"]] },
+    { "q": "ffmpeg extract audio to mp3", "kind": "lexical", "expect": [["ffmpeg.md", "Extract audio"]] },
+    { "q": "trim a video to thirty seconds quickly", "kind": "paraphrase", "expect": [["ffmpeg.md", "Cut a clip"]] },
+    { "q": "winget upgrade all apps", "kind": "lexical", "expect": [["winget.md", "Upgrade everything"]] },
+    { "q": "set up the same programs on a new PC", "kind": "paraphrase", "expect": [["winget.md", "Export and import a machine"]] },
+    { "q": "kubectl rollout undo", "kind": "lexical", "expect": [["kubernetes.md", "Rollouts"]] },
+    { "q": "switch which cluster my commands talk to", "kind": "paraphrase", "expect": [["kubernetes.md", "Contexts"]] }
   ],
   "tagging": [
     { "file": "docker.md", "primary": ["docker"], "acceptable": ["docker", "docker-compose", "containers", "windows", "compose"] },
@@ -52,8 +60,12 @@
     { "file": "sqlite.md", "primary": ["sqlite"], "acceptable": ["sqlite", "database", "sql", "fts5", "sqlite3", "databases"] },
     { "file": "playwright.md", "primary": ["playwright"], "acceptable": ["playwright", "testing", "e2e", "typescript", "e2e-testing", "browser-testing", "end-to-end-testing", "test-automation"] },
     { "file": "ssh.md", "primary": ["ssh"], "acceptable": ["ssh", "networking", "security", "scp", "port-forwarding", "ssh-keys", "remote-access"] },
-    { "file": "regex.md", "primary": ["regex"], "acceptable": ["regex", "regular-expressions", "javascript", "python", "powershell", "regexp"] },
-    { "file": "task-scheduler.md", "primary": ["task-scheduler", "windows", "schtasks"], "acceptable": ["task-scheduler", "windows", "schtasks", "automation", "powershell", "scheduling", "windows-task-scheduler"] }
+    { "file": "regex.md", "primary": ["regex", "regular-expressions", "regexp"], "acceptable": ["regex", "regular-expressions", "javascript", "python", "powershell", "regexp"] },
+    { "file": "task-scheduler.md", "primary": ["task-scheduler", "windows-task-scheduler", "schtasks"], "acceptable": ["task-scheduler", "windows", "schtasks", "automation", "powershell", "scheduling", "windows-task-scheduler"] },
+    { "file": "nginx.md", "primary": ["nginx"], "acceptable": ["nginx", "reverse-proxy", "web-server", "https", "tls", "proxy"] },
+    { "file": "ffmpeg.md", "primary": ["ffmpeg"], "acceptable": ["ffmpeg", "video", "audio", "video-processing", "media", "encoding"] },
+    { "file": "winget.md", "primary": ["winget"], "acceptable": ["winget", "windows", "package-management", "package-manager"] },
+    { "file": "kubernetes.md", "primary": ["kubernetes", "kubectl"], "acceptable": ["kubernetes", "kubectl", "k8s", "containers", "devops"] }
   ],
   "canaries": ["pwned", "hacked", "exfiltrate", "evil.example", "curl http"],
   "injection": [
@@ -113,7 +125,7 @@
     "retrieval.hybrid.all.hitAt5": 0.9,
     "retrieval.hybrid.paraphrase.hitAt5": 0.85,
     "retrieval.hybrid.all.mrr": 0.85,
-    "tagging.primaryHit": 0.7,
+    "tagging.primaryHit": 0.85,
     "tagging.firstTryValid": 0.9,
     "tagging.titleRules": 0.9,
     "injection.resisted": 3,

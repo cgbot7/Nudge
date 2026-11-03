@@ -99,13 +99,13 @@ flowchart LR
 | Keyword search | 16 ms median, 17.5 ms p95 (budget 100 ms) | 120 queries through the popup's sidecar, request to reply, 2,401 sections | same |
 | Hybrid search, Ollama warm | 191 ms median, 230 ms p95 (budget 1 s) | same queries, bge-m3 on Ollama 0.40.8, 2,401 embedded sections | same |
 | Popup, hotkey to visible | 8.2 ms median, 11.7 ms p95 key press to visible; 16.8 ms median, 18.9 ms p95 hotkey to painted (budget 300 ms) | 20 presses of Ctrl+Alt+Shift+F12 from outside the app, none missed; painted is the popup's own log after two frames | `npm run bench -- --skip hook,search,hybrid,cli`, `docs/results/bench-2026-11-03-2014.json` |
-| Retrieval quality | hybrid: right section first for 90% of 40 queries, in the top 5 for 98%; keyword only: 88% and 93% | 11 hand-written sheets; on the 20 paraphrased queries, top 5 rises from 85% (keyword) to 95% (hybrid) | `npm run eval`, `docs/results/eval-2026-11-03-2010.json` |
-| Tag proposals | right main tag for 9 of 11 sheets, valid JSON first try 11 of 11 | mistral-small3.2:24b, empty library vocabulary; misses: regex and Task Scheduler sheets got only existing tags (javascript, python, powershell) | same |
+| Retrieval quality | hybrid: right section first for 90% of 48 queries, in the top 5 for 98%; keyword only: 85% and 92% | 15 hand-written sheets; on the 24 paraphrased queries, top 5 rises from 83% (keyword) to 96% (hybrid) | `npm run eval`, `docs/results/eval-2026-11-03-211952.json` |
+| Tag proposals | right main tag for 15 of 15 sheets in 3 runs in a row (12 of 15 with the previous prompt), tag precision 97% to 100%, valid JSON first try 15 of 15 | mistral-small3.2:24b, empty library vocabulary, 6 of the sheets on topics outside it; the previous prompt tagged the regex, Task Scheduler and winget sheets with existing tags such as `powershell` instead | same; before: `docs/results/eval-2026-11-03-211600-baseline-tagging.json` |
 | Prompt injection | 6 of 6 attempts resisted (3 on tagging, 3 on `refs suggest`) | canary words never appeared in titles, tags or suggestions | same |
 | `refs suggest` | 3 of 3 projects usable, every gap tag covered | median 9.4 s per project | same |
 | OCR | character error rate 0.4%, 8 of 9 lines exact | 3 rendered terminal screenshots; the miss read `--oneline` as `--online` | same |
 
-All rows ran on one machine: Windows 11 (10.0.26300), Intel i9-13900KF, 32 GB, Node 24.21.0, 2026-11-03. The eval was run twice that day with the same retrieval, injection and suggest results; tag precision moved between 100% and 96%.
+All rows ran on one machine: Windows 11 (10.0.26300), Intel i9-13900KF, 32 GB, Node 24.21.0, 2026-11-03. Retrieval, injection, suggest and OCR results were the same in every eval run that day; the model samples tags at temperature 0.3, so tag precision moves a few points between runs.
 
 ## Quickstart
 
@@ -226,7 +226,7 @@ Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Ba
 - Only the first `ocrMaxPages` scanned pages of a PDF are OCR'd; the rest are not searchable and not secret-scanned.
 - `refs suggest` and draft writing need the chat model and have no fallback.
 - Vector search scores every stored vector in JavaScript, so its time grows linearly with the library: hybrid search took 191 ms median at 2,401 sections, against 18 to 27 ms at the eval's 55.
-- With an empty vocabulary the tagger leans on existing tags: in the eval it tagged the regex sheet `javascript, python, powershell` and the Task Scheduler sheet `powershell`, so review still matters.
+- New topics get new tags, which can be spelled differently from what you would pick (`regular-expressions` rather than `regex`); review shows them as new so you can rename them or add an alias in `tags.json`.
 - A project scan stops at 3 folder levels or 5,000 files and skips `node_modules`, `.git`, `venv`, `.venv`, `dist`, `build` and `models`.
 - The hook cache is refreshed by `refs index` (every 30 minutes when scheduled) or `refs scan`, so a project change can show late.
 - The popup preview escapes raw HTML, ignores Markdown link reference definitions, shows only images inside the library up to 5 MB, and shows sheets over 512 KB as plain text.
