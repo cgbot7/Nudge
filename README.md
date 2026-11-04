@@ -160,6 +160,9 @@ nudge does not read a `.env` file. Settings live in `%APPDATA%\nudge\config.json
 | `unusedAfterDays` | No | `30` | Days without use before a sheet is offered in "try:" |
 | `hotkey` | No | `Ctrl+Alt+Space` | Popup hotkey |
 | `ocrMaxPages` | No | `50` | Most scanned PDF pages OCR'd per file |
+| `harvest.enabled` | No | `false` | Run `nudge harvest` inside every `nudge index` (scheduled runs too) |
+| `harvest.sources.claude-memory` | No | `true` | Copy Claude Code memory notes (`~/.claude/projects/*/memory/*.md`, not `MEMORY.md`) |
+| `harvest.maxPerRun` | No | `25` | Most new sheets one harvest run imports; the rest wait for the next run |
 
 Environment variables the code reads (none are required):
 
@@ -184,11 +187,23 @@ npm run nudge -- search "remove stopped containers"
 npm run nudge -- doctor
 ```
 
-`npm run nudge -- help` lists all 16 commands. To set up the prompt hook, the scheduled task, `nudge` on your user PATH (`bin\nudge.cmd`), the Claude Code and OpenCode registrations and the popup at logon, preview the changes first:
+`npm run nudge -- help` lists all 17 commands. To set up the prompt hook, the scheduled task, `nudge` on your user PATH (`bin\nudge.cmd`), the Claude Code and OpenCode registrations and the popup at logon, preview the changes first:
 
 ```powershell
 npm run nudge -- install --dry-run
 ```
+
+**Harvest notes from LLM tools**
+
+`nudge harvest` copies notes that LLM tools saved on this machine into the library: Claude Code memory notes. Cursor's plan and rule files are left out on purpose; Cursor will come in through its chats only. The originals are only read, never moved or changed. Each new note goes through the normal import (secret scan, proposed title and tags) and waits as `pending`; `nudge review` accepts it or rejects it, and a rejected note is never copied again (that choice lives in the library's `harvest-seen.json`). When a note changes at its origin, its library copy follows, unless you edited the copy yourself.
+
+```powershell
+npm run nudge -- harvest --dry-run
+npm run nudge -- harvest
+npm run nudge -- review s_0012 --reject
+```
+
+Set `"harvest": { "enabled": true }` in `config.json` to run it inside every `nudge index`, so the scheduled task picks up new notes every 30 minutes.
 
 **Test**
 
@@ -232,6 +247,7 @@ Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Ba
 - The popup preview escapes raw HTML, ignores Markdown link reference definitions, shows only images inside the library up to 5 MB, and shows sheets over 512 KB as plain text.
 - `nudge_get` returns at most 40,000 characters; longer sheets must be read one section at a time.
 - Agent registration covers Claude Code and OpenCode only.
+- `nudge harvest` reads only Claude Code memory notes. Chat histories (Ollama app, Claude Code and Cursor transcripts) and cloud chats (Gemini, claude.ai) are not read yet.
 
 ## Further docs
 

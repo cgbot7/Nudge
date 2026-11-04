@@ -7,7 +7,7 @@ import { commitPaths, trackingRepo } from './git.ts';
 import { ensureLibrary, inboxDir, writeExtractCache, writeLibraryOcr } from './library.ts';
 import type { ProposeFn } from './llm.ts';
 import { withLock } from './lock.ts';
-import { findBySha, nextId, readManifest, writeManifest, type AllowEntry, type Proposal, type Sheet, type SheetFormat } from './manifest.ts';
+import { findBySha, nextId, readManifest, writeManifest, type AllowEntry, type HarvestInfo, type Proposal, type Sheet, type SheetFormat } from './manifest.ts';
 import { dataPaths, isInside, normPath, pathKey } from './paths.ts';
 import { blockingFindings, scanSecrets, type Finding } from './secrets.ts';
 import {
@@ -37,6 +37,12 @@ export interface AddOptions {
   propose?: ProposeFn | null;
   /** The file sits in the library's inbox (which is inside the library folder). */
   fromInbox?: boolean;
+  /**
+   * nudge harvest: the file is a temporary rendering of `origin`, which stays where it is.
+   * The sheet records the origin (not the temp path), source harvested, and allowlist
+   * entries made with nudge allow <origin>.
+   */
+  harvest?: { origin: string; info: HarvestInfo };
   /** Injectable for tests. */
   fsOps?: FsOps;
 }
@@ -104,7 +110,8 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
   warnings.push(...extracted.warnings);
 
   // OCR text is scanned like any other text before anything is moved or cached.
-  const allowlist = pendingAllowFor(abs);
+  const origin = opts.harvest?.origin ?? abs;
+  const allowlist = pendingAllowFor(origin);
   const findings = scanSecrets(extracted.text, allowlist);
   if (blockingFindings(findings).length) return { kind: 'blocked', file: abs, format, findings };
 
@@ -145,18 +152,19 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
     id,
     title,
     file: rel,
-    originalPath: normPath(abs),
+    originalPath: normPath(origin),
     sha256: sha,
     format,
     tags,
     status: tags.length ? 'verified' : 'pending',
-    source: 'imported',
+    source: opts.harvest ? 'harvested' : 'imported',
     learned: false,
     lastVerified: date,
     updatedAt: date,
     secretAllowlist: usedAllow,
     ...(proposal ? { proposal } : {}),
     ...(extracted.ocr ? { ocr: { ...extracted.ocr, at: date } } : {}),
+    ...(opts.harvest ? { harvest: opts.harvest.info } : {}),
   };
   const ocrRel = extracted.ocr ? writeLibraryOcr(library, sha, extracted.text) : null;
   try {
@@ -166,7 +174,7 @@ async function importPrepared(library: string, { abs, base, format, warnings }: 
     if (ocrRel) fs.rmSync(path.join(library, ...ocrRel.split('/')), { force: true });
     throw new NudgeError(`could not write manifest.json (${errorMessage(e)}); the file was put back.`);
   }
-  clearPendingAllow(abs);
+  clearPendingAllow(origin);
 
   try {
     const db = openDb();
@@ -256,7 +264,7 @@ function readPendingAllow(): PendingAllow {
   }
 }
 
-function pendingAllowFor(file: string): AllowEntry[] {
+export function pendingAllowFor(file: string): AllowEntry[] {
   return readPendingAllow()[pathKey(file)] ?? [];
 }
 

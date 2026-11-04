@@ -17,6 +17,20 @@ const OllamaSchema = z.object({
   chatApiKeyEnv: z.string().optional(),
 });
 
+/** nudge harvest: copy notes that LLM tools wrote to disk into the library. Off until enabled. */
+const HarvestSchema = z.object({
+  /** Run the harvest inside every nudge index (scheduled runs included). nudge harvest works either way. */
+  enabled: z.boolean().default(false),
+  sources: z
+    .object({
+      /** Claude Code memory notes: ~/.claude/projects/<project>/memory/*.md (MEMORY.md, the index, is skipped). */
+      'claude-memory': z.boolean().default(true),
+    })
+    .prefault({}),
+  /** New sheets per run, so a first run over a full history does not hold the lock for long. */
+  maxPerRun: z.number().int().positive().default(25),
+});
+
 export const ConfigSchema = z.object({
   library: z.string().min(1).default(() => defaultLibrary()),
   roots: z.array(z.string()).default([]),
@@ -25,6 +39,7 @@ export const ConfigSchema = z.object({
   unusedAfterDays: z.number().int().positive().default(30),
   hotkey: z.string().default('Ctrl+Alt+Space'),
   ocrMaxPages: z.number().int().positive().default(50),
+  harvest: HarvestSchema.prefault({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

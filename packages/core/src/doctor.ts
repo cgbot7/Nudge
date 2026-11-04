@@ -3,6 +3,8 @@ import path from 'node:path';
 import { loadConfig, type Config } from './config.ts';
 import { embeddingCoverage, embeddingModels, indexedSheets, openDb, sectionCount } from './db.ts';
 import { readGapIgnores } from './gaps.ts';
+import { readLedger } from './harvest/ledger.ts';
+import { SOURCES, SOURCE_NAMES } from './harvest/sources.ts';
 import { gitAvailable, isRepoRoot } from './git.ts';
 import { readHookCache } from './hookcache.ts';
 import { inboxCounts } from './inbox.ts';
@@ -59,9 +61,36 @@ export async function runDoctor(sys: SystemOps = realSystem()): Promise<Check[]>
   hookChecks(config, add, sys);
   await ollamaChecks(config, add);
   aiLibraryChecks(config, add);
+  harvestChecks(config, add);
   await agentChecks(add, sys);
   await popupChecks(config, add, sys);
   return checks;
+}
+
+function harvestChecks(config: Config, add: Add): void {
+  const h = config.harvest;
+  let ledger;
+  try {
+    ledger = readLedger(config.library);
+  } catch (e) {
+    add('fail', 'harvest', errorMessage(e));
+    return;
+  }
+  const entries = Object.values(ledger.files);
+  const copied = entries.filter((e) => e.sheetId).length;
+  const rejected = entries.filter((e) => e.rejected).length;
+  const state = h.enabled ? 'on in nudge index' : 'off in nudge index (set "harvest": {"enabled": true} in config.json; nudge harvest works either way)';
+  add('ok', 'harvest', `${state}; ${copied} copied, ${rejected} rejected`);
+  for (const name of SOURCE_NAMES) {
+    const source = SOURCES[name];
+    if (!h.sources[name]) {
+      add('ok', 'harvest', `${source.label}: turned off in config.json`);
+      continue;
+    }
+    const dir = source.dir();
+    if (!fs.existsSync(dir)) add('ok', 'harvest', `${source.label}: ${dir} not found; skipped`);
+    else add('ok', 'harvest', `${source.label}: ${source.list().length} notes in ${dir}`);
+  }
 }
 
 async function popupChecks(config: Config, add: Add, sys: SystemOps): Promise<void> {

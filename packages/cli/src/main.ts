@@ -14,8 +14,10 @@ import {
   applyInstall,
   blockingFindings,
   connectAi,
+  SOURCE_NAMES,
   dataPaths,
   ensureConfigFile,
+  ensureLibrary,
   errorMessage,
   findById,
   forTarget,
@@ -23,6 +25,7 @@ import {
   hybridSearch,
   ignoreGap,
   inboxDir,
+  isSourceName,
   loadConfig,
   loadSuggestions,
   logUsage,
@@ -36,7 +39,9 @@ import {
   readManifest,
   readTagVocab,
   realSystem,
+  rejectReview,
   runDoctor,
+  runHarvest,
   runIndex,
   saveDraft,
   saveSuggestions,
@@ -48,10 +53,12 @@ import {
   tagResolver,
   tryRefreshHookCache,
   verifySheet,
+  withLock,
   type AiServices,
   type Config,
   type FileEdit,
   type ExtractOptions,
+  type HarvestReport,
   type IndexReport,
   type SearchHit,
   type Sheet,
@@ -74,8 +81,11 @@ Usage:
   nudge index [--rebuild]                 import the inbox, sync library changes, update the index
                                          and embeddings, scan projects, write the hook cache
                                          (--rebuild: recreate index.db)
+  nudge harvest [--dry-run] [--source <name>]
+                                         copy notes LLM tools wrote (Claude Code memory) into the
+                                         library; the originals stay where they are
   nudge review                            confirm or edit proposed titles and tags of pending sheets
-    [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]]
+    [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]] [<id> --reject]
   nudge search <query> [--tags a,b] [--limit n] [--keyword] [--json]
   nudge for <path | "tag tag"> [--json]   sheets by tag, gaps and unused reminders
   nudge scan [path]                       re-detect one project, rewrite its hook cache entry
@@ -196,6 +206,11 @@ async function cmdAdd(args: string[]): Promise<number> {
 }
 
 function proposalLines(sheet: Sheet): string[] {
+  const from = sheet.harvest ? [`  harvested from ${sheet.harvest.origin} ${dim(`(${sheet.harvest.tool})`)}`] : [];
+  return [...from, ...proposalOnly(sheet)];
+}
+
+function proposalOnly(sheet: Sheet): string[] {
   const p = sheet.proposal;
   if (!p) return [`  no proposal yet ${dim('(Ollama was not available)')}`];
   if (p.error) return [`  no proposal ${dim(`(${p.error})`)}`];
@@ -213,11 +228,18 @@ async function reviewInteractive(cfg: Config, sheets: Sheet[]): Promise<number> 
       out(`${bold(sheet.id)}  "${sheet.title}"  ${dim(`(${sheet.format}${sheet.ocr ? ', OCR' : ''}, ${sheet.file}; ${i + 1} of ${sheets.length})`)}`);
       for (const line of proposalLines(sheet)) out(line);
       const usable = !!sheet.proposal?.tags.length;
-      const choices = usable ? '[a]ccept  [e]dit  [s]kip  [q]uit' : '[e]dit  [s]kip  [q]uit';
+      const harvested = sheet.source === 'harvested';
+      const choices = [usable && '[a]ccept', '[e]dit', harvested && '[r]eject', '[s]kip', '[q]uit'].filter(Boolean).join('  ');
       for (;;) {
         const answer = (await rl.question(`  ${choices} > `)).trim().toLowerCase();
         if (answer === 'q') return accepted;
         if (answer === 's' || answer === '') break;
+        if (answer === 'r' && harvested) {
+          const r = await rejectReview(cfg, sheet.id);
+          out(`  ${yellow('rejected')} ${sheet.id}; nudge harvest will not copy it again`);
+          if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+          break;
+        }
         let decision: { title?: string; tags?: string[] } | null = null;
         if (answer === 'a' && usable) decision = {};
         else if (answer === 'e') {
@@ -248,9 +270,9 @@ async function cmdReview(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { list: { type: 'boolean' }, 'accept-all': { type: 'boolean' }, accept: { type: 'boolean' }, tags: { type: 'string' }, title: { type: 'string' } },
+    options: { list: { type: 'boolean' }, 'accept-all': { type: 'boolean' }, accept: { type: 'boolean' }, reject: { type: 'boolean' }, tags: { type: 'string' }, title: { type: 'string' } },
   });
-  const usage = 'usage: nudge review [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]]';
+  const usage = 'usage: nudge review [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]] [<id> --reject]';
   if (positionals.length > 1) throw new NudgeError(usage);
   const cfg = config();
   const pending = pendingSheets(cfg.library);
@@ -265,6 +287,15 @@ async function cmdReview(args: string[]): Promise<number> {
   }
 
   const id = positionals[0];
+  if (id !== undefined && values.reject) {
+    if (values.accept || values.tags || values.title) throw new NudgeError(`--reject cannot be combined with --accept, --tags or --title.\n${usage}`);
+    const r = await rejectReview(cfg, id);
+    out(`${yellow('rejected')} ${r.sheet.id} "${r.sheet.title}"; nudge harvest will not copy ${r.origins.length === 1 ? 'it' : 'these'} again:`);
+    for (const o of r.origins) out(`  ${o}`);
+    if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
+    return 0;
+  }
+  if (values.reject) throw new NudgeError(`say which sheet to reject: nudge review <id> --reject`);
   if (id !== undefined) {
     const tags = parseTagList(values.tags);
     if (!values.accept && !tags.length) throw new NudgeError(`say what to do with ${id}: --accept (take the proposal) or --tags a,b [--title t].\n${usage}`);
@@ -406,8 +437,60 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+function printHarvestReport(h: HarvestReport): void {
+  const short = (o: string) => o.replace(/^.*\/projects\//i, '');
+  for (const a of h.added) {
+    for (const w of a.warnings) warn(`harvest: ${short(a.origin)}: ${w}`);
+    const tagNote = a.sheet.proposal?.tags.length ? `proposed tags: ${a.sheet.proposal.tags.join(', ')}` : a.queued ? 'tags wait for Ollama' : 'no tag proposal';
+    out(`harvest: copied ${short(a.origin)} as ${bold(a.sheet.id)} "${a.sheet.title}", pending (${tagNote})`);
+  }
+  for (const u of h.updated) out(`harvest: ${u.id} updated from ${short(u.origin)}`);
+  for (const e of h.edited) warn(`harvest: ${short(e.origin)} changed, but you edited ${e.id} in the library, so it was left as it is`);
+  for (const d of h.duplicates) out(dim(`harvest: ${short(d.origin)} has the same content as ${d.existing}`));
+  for (const b of h.blocked) {
+    const f = blockingFindings(b.findings)[0] ?? b.findings[0]!;
+    warn(`harvest: ${b.origin} has a likely secret (line ${f.line}, ${f.rule}); not copied. Redact it at the origin, or if it is a false positive: nudge allow "${b.origin}" --finding ${f.n}`);
+  }
+  for (const f of h.failed) warn(`harvest: ${short(f.origin)}: ${f.reason}`);
+  for (const a of h.wouldAdd) out(`would copy: ${a.origin} ${dim(`(${a.source})`)}`);
+  for (const u of h.wouldUpdate) out(`would update: ${u.id} from ${u.origin}`);
+  if (h.deferred) out(dim(`harvest: ${plural(h.deferred, 'more note')} wait for the next run (harvest.maxPerRun)`));
+  const counts = [
+    h.dryRun ? `${h.wouldAdd.length} to copy, ${h.wouldUpdate.length} to update` : `${h.added.length} copied, ${h.updated.length} updated`,
+    `${h.unchanged} unchanged`,
+    h.rejected && `${h.rejected} rejected before`,
+    h.blocked.length && `${h.blocked.length} blocked`,
+  ].filter(Boolean);
+  out(`harvest${h.dryRun ? ' (dry run, nothing written)' : ''}: ${counts.join(', ')}; sources: ${h.sources.map((s) => `${s.name} ${s.found ? s.files : 'not found'}`).join(', ') || 'none enabled'}`);
+}
+
+async function cmdHarvest(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { 'dry-run': { type: 'boolean' }, source: { type: 'string' } } });
+  if (positionals.length) throw new NudgeError('usage: nudge harvest [--dry-run] [--source <name>]');
+  const only = (values.source ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  for (const s of only) if (!isSourceName(s)) throw new NudgeError(`unknown source "${s}". Sources: ${SOURCE_NAMES.join(', ')}`);
+  const loaded = loadConfig();
+  const cfg = loaded.config;
+  const dryRun = !!values['dry-run'];
+  if (!dryRun) {
+    if (ensureConfigFile(cfg)) out(dim(`created config at ${loaded.path}`));
+    for (const n of ensureLibrary(cfg.library)) out(dim(n));
+  }
+  const ai = dryRun ? null : await connectAi(cfg);
+  if (ai && !ai.up) warn(`Ollama is not available (${ai.downReason}): copied notes wait in the review queue without proposed tags`);
+  const run = () => runHarvest(cfg, { propose: ai?.propose ?? null, extract: extractOptions(cfg, ai), dryRun, only: only.filter(isSourceName), force: only.length > 0 });
+  // A dry run only reads, so it needs no lock.
+  const report = dryRun ? await run() : await withLock('harvest', run);
+  printHarvestReport(report);
+  if (report.commitError) warn(`the Git commit failed: ${report.commitError}`);
+  if (report.added.length) out(dim('confirm or reject them with nudge review'));
+  if (report.updated.length) out(dim('run nudge index to re-index the updated copies'));
+  return 0;
+}
+
 function printIndexReport(r: IndexReport): void {
   for (const n of r.notes) out(dim(n));
+  if (r.harvest) printHarvestReport(r.harvest);
   const s = r.sync;
   for (const e of s.edited) out(`edited: ${e} re-extracted and re-indexed`);
   for (const m of s.renamed) out(`renamed: ${m.id} ${m.from} -> ${m.to}`);
@@ -760,6 +843,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdReview(args);
     case 'open':
       return cmdOpen(args);
+    case 'harvest':
+      return cmdHarvest(args);
     case 'index':
       return cmdIndex(args);
     case 'scan':

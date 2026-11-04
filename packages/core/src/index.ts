@@ -13,6 +13,7 @@ export * from './embed.ts';
 export * from './extract/image.ts';
 export * from './extract/index.ts';
 export * from './gaps.ts';
+export * from './harvest/index.ts';
 export * from './git.ts';
 export * from './hookcache.ts';
 export * from './hotkey.ts';
