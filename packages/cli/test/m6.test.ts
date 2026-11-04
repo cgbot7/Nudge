@@ -71,3 +71,18 @@ test('nudge harvest: dry run, copy, review shows the origin, reject, doctor', as
   assert.match(r.stdout, /harvest.*Cursor chats: .* not found; skipped/);
   assert.match(r.stdout, /harvest.*chats since \d{4}-\d{2}-\d{2}: 0 read, 0 drafts written/);
 });
+
+test('a scheduled nudge index logs what the harvest did', async () => {
+  const file = path.join(t.env.APPDATA!, 'nudge', 'config.json');
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), harvest: { enabled: true } }));
+  write(path.dirname(origin), 'git-tips.md', '# Git tips\n\n```bash\ngit switch -c topic\n```\n');
+  const log = path.join(t.env.LOCALAPPDATA!, 'nudge', 'logs', 'index.log');
+
+  let r = await nudge(['index', '--scheduled']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1)!, /ok: \d+ sheets, \d+ updated, \d+ projects; harvest: 1 copied$/);
+
+  r = await nudge(['index', '--scheduled']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1)!, /; harvest: nothing new$/);
+});

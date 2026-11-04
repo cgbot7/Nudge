@@ -468,6 +468,26 @@ function printHarvestReport(h: HarvestReport): void {
   if (h.sources.some((s) => s.name.endsWith('chats') || s.name === 'exports')) printChatReport(h);
 }
 
+/** One line for logs\index.log: only what happened, or "nothing new". */
+function harvestSummary(h: HarvestReport): string {
+  const c = h.chats;
+  const blocked = h.blocked.length + c.blocked.length;
+  const failed = h.failed.length + c.failed.length;
+  const parts = [
+    h.added.length && `${h.added.length} copied`,
+    h.updated.length && `${h.updated.length} updated`,
+    c.drafts.length && plural(c.drafts.length, 'draft'),
+    h.deferred && `${h.deferred} notes waiting`,
+    c.waiting && `${plural(c.waiting, 'chat')} waiting (${c.waitingReason ?? 'later run'})`,
+    blocked && `${blocked} blocked`,
+    failed && `${failed} failed`,
+    c.exportsDone.length && `${plural(c.exportsDone.length, 'export')} done`,
+    c.exportsUnknown.length && `${plural(c.exportsUnknown.length, 'export')} unreadable`,
+    h.commitError && 'commit failed',
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'nothing new';
+}
+
 function printChatReport(h: HarvestReport): void {
   const c = h.chats;
   const where = (x: { source: string; chat: string }) => `"${x.chat}" ${dim(`(${x.source})`)}`;
@@ -569,7 +589,7 @@ async function cmdIndex(args: string[]): Promise<number> {
     // Task Scheduler run: no console to write to, so failures go to logs\index.log.
     try {
       const r = await runIndex(config(), { rebuild: values.rebuild, scheduled: true });
-      if (r) logScheduled(`ok: ${r.sheets} sheets, ${r.indexed} updated, ${r.projects.length} projects`);
+      if (r) logScheduled(`ok: ${r.sheets} sheets, ${r.indexed} updated, ${r.projects.length} projects${r.harvest ? `; harvest: ${harvestSummary(r.harvest)}` : ''}`);
     } catch (e) {
       logScheduled(`error: ${errorMessage(e)}`);
       return 1;
