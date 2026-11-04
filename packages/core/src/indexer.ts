@@ -11,6 +11,7 @@ import type { ExtractOptions } from './extract/index.ts';
 import { ignoredFor } from './gaps.ts';
 import { commitPaths } from './git.ts';
 import { buildEntry, matchSheets, newHookCache, readHookCache, statsContext, writeHookCache, type ProjectEntry, type StatsContext } from './hookcache.ts';
+import { runHarvest, type HarvestReport } from './harvest/index.ts';
 import { processInbox, type InboxReport } from './inbox.ts';
 import { ensureLibrary, extractCached, sheetAbsPath, syncLibrary, writeExtractCache, writeLibraryOcr, type SyncReport } from './library.ts';
 import { LockBusyError, acquireLock, withLock } from './lock.ts';
@@ -28,6 +29,8 @@ export interface IndexReport {
   warnings: string[];
   sync: SyncReport;
   inbox: InboxReport;
+  /** Null when harvest.enabled is off in config.json. */
+  harvest: HarvestReport | null;
   /** Ollama status for this run. */
   ai: { up: boolean; reason?: string };
   /** Proposals made for sheets queued while Ollama was down. */
@@ -142,6 +145,13 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
     const ai = await connectAi(config);
     const extract: ExtractOptions = { ocr: ai.ocr, ocrMaxPages: config.ocrMaxPages };
 
+    // Before the sync, so harvested copies rewritten from a changed origin are re-indexed in this run.
+    let harvest: HarvestReport | null = null;
+    if (config.harvest.enabled) {
+      harvest = await runHarvest(config, { propose: ai.propose, extract });
+      if (harvest.commitError) warnings.push(`harvest done, but the Git commit failed: ${harvest.commitError}`);
+    }
+
     const sync = await syncLibrary(library, readManifest(library), { extract });
     if (sync.commitError) warnings.push(`library synced, but the Git commit failed: ${sync.commitError}`);
     if (opts.rebuild) deleteIndexDb();
@@ -177,6 +187,7 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
       warnings,
       sync,
       inbox,
+      harvest,
       ai: { up: ai.up, reason: ai.downReason },
       retag,
       embed,

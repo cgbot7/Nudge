@@ -46,6 +46,19 @@ export const LlmInfoSchema = z.object({
 });
 export type LlmInfo = z.infer<typeof LlmInfoSchema>;
 
+/** Where nudge harvest copied a sheet from (source harvested). The origin is only ever read. */
+export const HarvestInfoSchema = z.object({
+  /** Harvest source name, such as claude-memory. */
+  tool: z.string(),
+  kind: z.enum(['file', 'chat']),
+  /** Normalized path of the file it was copied from. */
+  origin: z.string(),
+  at: isoDate,
+  /** Project the origin belongs to, when the tool keeps one (Claude Code project folder). */
+  project: z.string().optional(),
+});
+export type HarvestInfo = z.infer<typeof HarvestInfoSchema>;
+
 // Loose so fields added by hand or by later milestones survive a rewrite.
 export const SheetSchema = z.looseObject({
   id: z.string().regex(/^s_\d{4,}$/, 'expected s_0000'),
@@ -56,7 +69,7 @@ export const SheetSchema = z.looseObject({
   format: SheetFormat,
   tags: z.array(z.string()),
   status: z.enum(['pending', 'verified', 'draft']),
-  source: z.enum(['imported', 'llm']),
+  source: z.enum(['imported', 'llm', 'harvested']),
   learned: z.boolean().default(false),
   lastVerified: isoDate,
   updatedAt: isoDate,
@@ -64,6 +77,7 @@ export const SheetSchema = z.looseObject({
   proposal: ProposalSchema.optional(),
   ocr: OcrInfoSchema.optional(),
   llm: LlmInfoSchema.optional(),
+  harvest: HarvestInfoSchema.optional(),
 });
 export type Sheet = z.infer<typeof SheetSchema>;
 

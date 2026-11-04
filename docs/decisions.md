@@ -100,6 +100,14 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 **Cost.** Starting real processes makes the suite take about 25 s for 133 tests. The real Task Scheduler and `claude.exe` are only exercised by hand; the real registry calls are tested against a throwaway key, never the Run key.
 
+## 13. Harvest copies LLM notes; it never moves them
+
+**Decision.** `nudge harvest` (`packages/core/src/harvest/`) reads Claude Code memory notes and imports a rendered copy through the normal pipeline, with `source: harvested` and the origin recorded. The origin is never moved or changed. `harvest-seen.json` in the library keeps each origin's last hash, the sheet it became and whether you rejected it. A changed origin rewrites the library copy only while the copy still matches what harvest last wrote.
+
+**Why.** Every other import moves the original so no second copy can drift, but those tools still read their own files; moving a memory note would break Claude Code. Cursor's plan files were left out: they are build plans for one project, not reference notes, so Cursor is meant to come in through its chats only. Keeping the ledger in the library means a rebuild never offers a rejected note again, and never overwriting an edited copy keeps the library the place where you edit.
+
+**Cost.** Two copies of each note exist, and an edited copy stops following its origin. Notes arrive as `pending`, so a first run over a full history fills the review queue (`harvest.maxPerRun` spreads it over runs).
+
 ## What it deliberately does not do
 
 Following [SPEC.md](../SPEC.md), there are no web sources or bookmarks (export to a file first), no editing of sheets inside the tool, no notes typed into the popup, no agent writing sheets, no shells other than PowerShell, and no build for macOS or Linux. Each of these would add a surface to secure or a second place to edit, for a personal tool that already has a normal editor and a library folder.

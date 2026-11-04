@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import type { Config } from './config.ts';
+import { openDb, removeSheet } from './db.ts';
 import { commitPaths } from './git.ts';
+import { LEDGER_FILE, rejectInLedger } from './harvest/ledger.ts';
 import { refreshHookCache } from './hookcache.ts';
 import { extractCached, sheetAbsPath } from './library.ts';
 import type { ProposeFn } from './llm.ts';
@@ -52,6 +54,44 @@ export function acceptReview(config: Config, id: string, decision: ReviewDecisio
     const commit = commitPaths(config.library, ['manifest.json', ...(addedToVocab.length ? ['tags.json'] : [])], `nudge: review ${id} (verified: ${tags.join(', ')})`);
     refreshHookCache(config);
     return { sheet, addedToVocab, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
+  }, opts);
+}
+
+export interface RejectResult {
+  sheet: Sheet;
+  /** Origins that nudge harvest will never copy again. */
+  origins: string[];
+  commitError?: string;
+}
+
+/**
+ * Reject a harvested sheet: it leaves the manifest, the library and the index, and its
+ * origins are marked rejected in harvest-seen.json. Git history keeps the old copy, and
+ * the origin itself is never touched.
+ */
+export function rejectReview(config: Config, id: string, opts: { waitMs?: number } = {}): Promise<RejectResult> {
+  return withLock('review', () => {
+    const { library } = config;
+    const sheets = readManifest(library);
+    const sheet = findById(sheets, id);
+    if (!sheet) throw new NudgeError(`no sheet with id ${id}.`);
+    if (sheet.source !== 'harvested') throw new NudgeError(`${id} was not harvested; only harvested sheets can be rejected. Delete a sheet you imported yourself by hand.`);
+    writeManifest(library, sheets.filter((s) => s.id !== id));
+    fs.rmSync(sheetAbsPath(library, sheet), { force: true });
+    const origins = rejectInLedger(library, id);
+    try {
+      const db = openDb();
+      try {
+        removeSheet(db, id);
+      } finally {
+        db.close();
+      }
+    } catch {
+      // The next nudge index drops it from the index anyway.
+    }
+    const commit = commitPaths(library, ['manifest.json', sheet.file, ...(origins.length ? [LEDGER_FILE] : [])],`nudge: reject harvested ${id} ${sheet.title}`);
+    refreshHookCache(config);
+    return { sheet, origins, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
   }, opts);
 }
 
