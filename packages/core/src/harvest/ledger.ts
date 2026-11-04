@@ -25,9 +25,30 @@ const FileEntrySchema = z.object({
 });
 export type LedgerFileEntry = z.infer<typeof FileEntrySchema>;
 
+const ChatEntrySchema = z.object({
+  source: z.string(),
+  title: z.string().optional(),
+  /** Messages already looked at; only later ones are read on the next run. */
+  seen: z.number().int().nonnegative(),
+  /** File modification time (or the export's update time) when it was last read. */
+  mtimeMs: z.number().nonnegative(),
+  /** Drafts written from this chat. */
+  sheetIds: z.array(z.string()).default([]),
+  /** A draft from it was rejected in nudge review: the chat is never read again. */
+  rejected: z.boolean().optional(),
+});
+export type LedgerChatEntry = z.infer<typeof ChatEntrySchema>;
+
 const LedgerSchema = z.object({
   /** Keyed by pathKey(origin). */
   files: z.record(z.string(), FileEntrySchema).default({}),
+  /** Keyed by "<source>:<conversation id>". */
+  chats: z.record(z.string(), ChatEntrySchema).default({}),
+  /**
+   * Chats last changed before this date are never read unless asked (nudge harvest --since),
+   * so turning harvest on does not send a whole history through the model. Set on the first run.
+   */
+  chatsSince: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type Ledger = z.infer<typeof LedgerSchema>;
 
@@ -37,7 +58,7 @@ export function ledgerPath(library: string): string {
 
 export function readLedger(library: string): Ledger {
   const file = ledgerPath(library);
-  if (!fs.existsSync(file)) return { files: {} };
+  if (!fs.existsSync(file)) return { files: {}, chats: {} };
   let raw: unknown;
   try {
     raw = JSON.parse(decodeText(fs.readFileSync(file)));
@@ -49,12 +70,19 @@ export function readLedger(library: string): Ledger {
   return parsed.data;
 }
 
-export function writeLedger(library: string, ledger: Ledger): void {
-  const sorted = Object.fromEntries(Object.entries(ledger.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  writeFileAtomic(ledgerPath(library), JSON.stringify({ files: sorted }, null, 2) + '\n');
+function sortedRecord<T>(r: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(r).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
-/** After nudge review rejects a harvested sheet: its origins are never copied again. Returns them. */
+export function writeLedger(library: string, ledger: Ledger): void {
+  const out = { ...(ledger.chatsSince ? { chatsSince: ledger.chatsSince } : {}), files: sortedRecord(ledger.files), chats: sortedRecord(ledger.chats) };
+  writeFileAtomic(ledgerPath(library), JSON.stringify(out, null, 2) + '\n');
+}
+
+/**
+ * After nudge review rejects a harvested sheet: its origin files are never copied again, and
+ * a chat it was written from is never read again. Returns the origins (files) and chat titles.
+ */
 export function rejectInLedger(library: string, id: string): string[] {
   const ledger = readLedger(library);
   const origins: string[] = [];
@@ -64,6 +92,12 @@ export function rejectInLedger(library: string, id: string): string[] {
     delete entry.sheetId;
     delete entry.librarySha;
     origins.push(entry.origin);
+  }
+  for (const [key, entry] of Object.entries(ledger.chats)) {
+    if (!entry.sheetIds.includes(id)) continue;
+    entry.rejected = true;
+    entry.sheetIds = entry.sheetIds.filter((s) => s !== id);
+    origins.push(`chat ${entry.title ?? key}`);
   }
   if (origins.length) writeLedger(library, ledger);
   return origins;

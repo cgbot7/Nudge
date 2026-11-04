@@ -148,7 +148,7 @@ export async function runIndex(config: Config, opts: { rebuild?: boolean; schedu
     // Before the sync, so harvested copies rewritten from a changed origin are re-indexed in this run.
     let harvest: HarvestReport | null = null;
     if (config.harvest.enabled) {
-      harvest = await runHarvest(config, { propose: ai.propose, extract });
+      harvest = await runHarvest(config, { propose: ai.propose, extract, client: ai.up ? ai.client : null });
       if (harvest.commitError) warnings.push(`harvest done, but the Git commit failed: ${harvest.commitError}`);
     }
 

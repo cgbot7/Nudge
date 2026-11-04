@@ -16,6 +16,17 @@ export function pendingSheets(library: string): Sheet[] {
   return readManifest(library).filter((s) => s.status === 'pending');
 }
 
+/** A draft nudge harvest wrote from a chat: reviewed like a pending sheet. */
+export function isHarvestedDraft(sheet: Sheet): boolean {
+  return sheet.status === 'draft' && !!sheet.harvest;
+}
+
+/** What nudge review walks through: pending sheets, then drafts harvested from chats. */
+export function reviewQueue(library: string): Sheet[] {
+  const sheets = readManifest(library);
+  return [...sheets.filter((s) => s.status === 'pending'), ...sheets.filter(isHarvestedDraft)];
+}
+
 export interface ReviewDecision {
   /** Final title; defaults to the proposed title, then the current one. */
   title?: string;
@@ -31,16 +42,18 @@ export interface ReviewResult {
 }
 
 /**
- * Confirm a pending sheet: it becomes verified with lastVerified today, takes the
- * chosen (or proposed) title and tags, and its proposal is dropped. New tags join tags.json.
+ * Confirm a pending sheet (or a draft harvested from a chat): it becomes verified with
+ * lastVerified today, takes the chosen (or proposed) title and tags, and its proposal is
+ * dropped. New tags join tags.json. A harvested draft's own tags count as its proposal.
  */
 export function acceptReview(config: Config, id: string, decision: ReviewDecision = {}, opts: { waitMs?: number } = {}): Promise<ReviewResult> {
   return withLock('review', () => {
     const sheets = readManifest(config.library);
     const sheet = findById(sheets, id);
     if (!sheet) throw new NudgeError(`no sheet with id ${id}.`);
-    if (sheet.status !== 'pending') throw new NudgeError(`${id} is ${sheet.status}, not pending; there is nothing to review.`);
-    const tags = [...new Set((decision.tags ?? sheet.proposal?.tags ?? []).map(normalizeTag).filter(Boolean))];
+    const draft = isHarvestedDraft(sheet);
+    if (sheet.status !== 'pending' && !draft) throw new NudgeError(`${id} is ${sheet.status}, not pending; there is nothing to review.`);
+    const tags = [...new Set((decision.tags ?? sheet.proposal?.tags ?? (draft ? sheet.tags : [])).map(normalizeTag).filter(Boolean))];
     if (!tags.length) throw new NudgeError(`${id} has no proposed tags; give them with --tags a,b.`);
     const title = (decision.title ?? sheet.proposal?.title ?? sheet.title).trim() || sheet.title;
 
@@ -75,7 +88,7 @@ export function rejectReview(config: Config, id: string, opts: { waitMs?: number
     const sheets = readManifest(library);
     const sheet = findById(sheets, id);
     if (!sheet) throw new NudgeError(`no sheet with id ${id}.`);
-    if (sheet.source !== 'harvested') throw new NudgeError(`${id} was not harvested; only harvested sheets can be rejected. Delete a sheet you imported yourself by hand.`);
+    if (!sheet.harvest) throw new NudgeError(`${id} was not harvested; only harvested sheets can be rejected. Delete a sheet you imported yourself by hand.`);
     writeManifest(library, sheets.filter((s) => s.id !== id));
     fs.rmSync(sheetAbsPath(library, sheet), { force: true });
     const origins = rejectInLedger(library, id);
@@ -89,7 +102,7 @@ export function rejectReview(config: Config, id: string, opts: { waitMs?: number
     } catch {
       // The next nudge index drops it from the index anyway.
     }
-    const commit = commitPaths(library, ['manifest.json', sheet.file, ...(origins.length ? [LEDGER_FILE] : [])],`nudge: reject harvested ${id} ${sheet.title}`);
+    const commit = commitPaths(library, ['manifest.json', sheet.file, ...(origins.length ? [LEDGER_FILE] : [])], `nudge: reject harvested ${id} ${sheet.title}`);
     refreshHookCache(config);
     return { sheet, origins, commitError: commit.ok ? undefined : commit.stderr || 'unknown error' };
   }, opts);

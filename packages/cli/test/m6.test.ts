@@ -31,12 +31,12 @@ before(() => {
 test('nudge harvest: dry run, copy, review shows the origin, reject, doctor', async () => {
   let r = await nudge(['harvest', '--source', 'nope']);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /unknown source "nope"\. Sources: claude-memory$/m);
+  assert.match(r.stderr, /unknown source "nope"\. Sources: claude-memory, claude-chats, cursor-chats, exports$/m);
 
   r = await nudge(['harvest', '--dry-run']);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /would copy: .*ssh-keys\.md \(claude-memory\)/);
-  assert.match(r.stdout, /harvest \(dry run, nothing written\): 1 to copy, 0 to update, 0 unchanged; sources: claude-memory 1$/m);
+  assert.match(r.stdout, /harvest \(dry run, nothing written\): 1 to copy, 0 to update, 0 unchanged; sources: claude-memory 1, claude-chats 0, cursor-chats not found, exports not found$/m);
   assert.equal(fs.existsSync(t.library), false, 'a dry run does not even create the library');
 
   r = await nudge(['harvest']);
@@ -58,7 +58,7 @@ test('nudge harvest: dry run, copy, review shows the origin, reject, doctor', as
 
   r = await nudge(['review', 's_0001', '--reject']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /rejected s_0001 "Ssh keys"; nudge harvest will not copy it again:/);
+  assert.match(r.stdout, /rejected s_0001 "Ssh keys"; nudge harvest will not read it again:/);
   assert.ok(fs.existsSync(origin));
 
   r = await nudge(['harvest']);
@@ -67,5 +67,7 @@ test('nudge harvest: dry run, copy, review shows the origin, reject, doctor', as
   r = await nudge(['doctor']);
   assert.match(r.stdout, /harvest.*off in nudge index .*; 0 copied, 1 rejected/);
   assert.match(r.stdout, /harvest.*Claude Code memory: 1 notes in /);
-  assert.doesNotMatch(r.stdout, /Cursor/);
+  assert.doesNotMatch(r.stdout, /Cursor plans/);
+  assert.match(r.stdout, /harvest.*Cursor chats: .* not found; skipped/);
+  assert.match(r.stdout, /harvest.*chats since \d{4}-\d{2}-\d{2}: 0 read, 0 drafts written/);
 });

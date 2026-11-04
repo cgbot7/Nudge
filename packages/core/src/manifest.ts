@@ -48,7 +48,7 @@ export type LlmInfo = z.infer<typeof LlmInfoSchema>;
 
 /** Where nudge harvest copied a sheet from (source harvested). The origin is only ever read. */
 export const HarvestInfoSchema = z.object({
-  /** Harvest source name, such as claude-memory. */
+  /** Harvest source name, such as claude-memory or claude-chats. */
   tool: z.string(),
   kind: z.enum(['file', 'chat']),
   /** Normalized path of the file it was copied from. */
@@ -56,6 +56,8 @@ export const HarvestInfoSchema = z.object({
   at: isoDate,
   /** Project the origin belongs to, when the tool keeps one (Claude Code project folder). */
   project: z.string().optional(),
+  /** Chats only: the ledger key of the conversation the draft was written from. */
+  conversation: z.string().optional(),
 });
 export type HarvestInfo = z.infer<typeof HarvestInfoSchema>;
 
