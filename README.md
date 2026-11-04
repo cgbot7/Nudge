@@ -162,7 +162,12 @@ nudge does not read a `.env` file. Settings live in `%APPDATA%\nudge\config.json
 | `ocrMaxPages` | No | `50` | Most scanned PDF pages OCR'd per file |
 | `harvest.enabled` | No | `false` | Run `nudge harvest` inside every `nudge index` (scheduled runs too) |
 | `harvest.sources.claude-memory` | No | `true` | Copy Claude Code memory notes (`~/.claude/projects/*/memory/*.md`, not `MEMORY.md`) |
+| `harvest.sources.claude-chats` | No | `true` | Turn new Claude Code chats (`~/.claude/projects/*/*.jsonl`) into drafts |
+| `harvest.sources.cursor-chats` | No | `true` | Turn new Cursor agent chats (`~/.cursor/projects/*/agent-transcripts`) into drafts |
+| `harvest.sources.exports` | No | `true` | Turn chats in export files dropped into `exportsDir` into drafts |
 | `harvest.maxPerRun` | No | `25` | Most new sheets one harvest run imports; the rest wait for the next run |
+| `harvest.maxChatsPerRun` | No | `5` | Most chats one run sends to the chat model; the rest wait for the next run |
+| `harvest.exportsDir` | No | `%USERPROFILE%\nudge-exports` | Folder for claude.ai and Google Takeout export files |
 
 Environment variables the code reads (none are required):
 
@@ -195,15 +200,21 @@ npm run nudge -- install --dry-run
 
 **Harvest notes from LLM tools**
 
-`nudge harvest` copies notes that LLM tools saved on this machine into the library: Claude Code memory notes. Cursor's plan and rule files are left out on purpose; Cursor will come in through its chats only. The originals are only read, never moved or changed. Each new note goes through the normal import (secret scan, proposed title and tags) and waits as `pending`; `nudge review` accepts it or rejects it, and a rejected note is never copied again (that choice lives in the library's `harvest-seen.json`). When a note changes at its origin, its library copy follows, unless you edited the copy yourself.
+`nudge harvest` brings what LLM tools left on this machine into the library. The originals are only read, never moved or changed.
+
+- **Claude Code memory notes** are copied as they are. Each new note goes through the normal import (secret scan, proposed title and tags) and waits as `pending`; `nudge review` accepts it or rejects it, and a rejected note is never copied again (that choice lives in the library's `harvest-seen.json`). When a note changes at its origin, its library copy follows, unless you edited the copy yourself.
+- **Chats** from Claude Code and Cursor, and from export files you drop into `%USERPROFILE%\nudge-exports` (a claude.ai data export zip, or a Google Takeout zip of "My Activity > Gemini Apps" in JSON), are read for new exchanges only. A quick filter keeps exchanges with commands, code, long lists or "how do I" questions; the chat model then writes a short cheat sheet from them, or says there is nothing reusable. Each one becomes a `draft` in `drafts\` and joins the `nudge review` queue, where `a` verifies it and `r` rejects it, after which that chat is never read again. Transcripts with a likely secret are never sent to the model. A draft that repeats a sheet you already have (by embedding similarity) is not saved. On the first run only chats changed that day are read; `--since <date>` reads further back. Each run sends at most `harvest.maxChatsPerRun` chats to the model, newest first. Fully read export files move to `_done`, unreadable ones to `_unknown` with a reason file.
+
+Cursor's plan and rule files and Ollama's own chats are left out on purpose.
 
 ```powershell
 npm run nudge -- harvest --dry-run
 npm run nudge -- harvest
+npm run nudge -- harvest --since 2026-10-01
 npm run nudge -- review s_0012 --reject
 ```
 
-Set `"harvest": { "enabled": true }` in `config.json` to run it inside every `nudge index`, so the scheduled task picks up new notes every 30 minutes.
+Set `"harvest": { "enabled": true }` in `config.json` to run it inside every `nudge index`, so the scheduled task picks up new notes and chats every 30 minutes.
 
 **Test**
 
@@ -247,7 +258,8 @@ Command status in the 2026-10-28 audit: `npm ci`, `tools\check.cmd` (from Git Ba
 - The popup preview escapes raw HTML, ignores Markdown link reference definitions, shows only images inside the library up to 5 MB, and shows sheets over 512 KB as plain text.
 - `nudge_get` returns at most 40,000 characters; longer sheets must be read one section at a time.
 - Agent registration covers Claude Code and OpenCode only.
-- `nudge harvest` reads only Claude Code memory notes. Chat histories (Ollama app, Claude Code and Cursor transcripts) and cloud chats (Gemini, claude.ai) are not read yet.
+- `nudge harvest` reads Claude Code memory notes and Claude Code, Cursor and exported chats only. Gemini and claude.ai chats need an export file, since they live on Google's and Anthropic's servers. The Gemini parser follows the Takeout JSON layout as documented and has not been tried on a real export yet.
+- Chat distilling runs a local 24B model per chat, so `harvest.maxChatsPerRun` keeps each run short and a backlog takes several runs.
 
 ## Further docs
 

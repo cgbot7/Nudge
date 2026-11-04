@@ -182,6 +182,7 @@ test('only harvested sheets can be rejected', async () => {
   await runHarvest(config);
   const sheets = readManifest(t.library);
   sheets[0]!.source = 'imported';
+  delete sheets[0]!.harvest;
   fs.writeFileSync(path.join(t.library, 'manifest.json'), JSON.stringify(sheets));
   await assert.rejects(() => rejectReview(config, sheets[0]!.id), /was not harvested/);
 });
@@ -219,7 +220,7 @@ test('dry run writes nothing; sources can be turned off; maxPerRun defers the re
   assert.equal(fs.existsSync(ledgerPath(t.library)), false);
   assert.equal(readManifest(t.library).length, 0);
 
-  const off = await runHarvest(cfg({ sources: { 'claude-memory': false } }), { dryRun: true });
+  const off = await runHarvest(cfg({ sources: { 'claude-memory': false, 'claude-chats': false, 'cursor-chats': false, exports: false } }), { dryRun: true });
   assert.deepEqual(off.sources, []);
   assert.equal(off.wouldAdd.length, 0);
 

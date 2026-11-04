@@ -108,6 +108,14 @@ The choices an interviewer is most likely to ask about, with the reason for each
 
 **Cost.** Two copies of each note exist, and an edited copy stops following its origin. Notes arrive as `pending`, so a first run over a full history fills the review queue (`harvest.maxPerRun` spreads it over runs).
 
+## 14. Chats become drafts, filtered twice
+
+**Decision.** Chats (Claude Code and Cursor transcripts, claude.ai and Gemini export files) are read only for exchanges after the last run (`harvest-seen.json` counts the messages seen). A regex filter keeps exchanges with code, commands, long lists or "how do I" questions; only those go to the chat model, wrapped as data, which must answer with schema-valid JSON: either a cheat sheet or "not useful". Results are `draft` sheets with the chat recorded as provenance, reviewed in `nudge review`. On the first run only chats changed that day are read, and each run sends at most `maxChatsPerRun` chats.
+
+**Why.** A chat is not a sheet, so something has to write one, and a person still has to check it, which is what drafts and the review queue already do. The filter keeps a slow local model away from the many chats that hold nothing reusable, and the start date keeps turning harvest on from sending 267 MB of history through it.
+
+**Cost.** The model sees at most 10,000 characters per chat, the newest exchanges first, so a long chat is summarized from its end. Exchanges the filter drops are never seen. Rejecting a draft stops that whole chat, including anything said in it later.
+
 ## What it deliberately does not do
 
 Following [SPEC.md](../SPEC.md), there are no web sources or bookmarks (export to a file first), no editing of sheets inside the tool, no notes typed into the popup, no agent writing sheets, no shells other than PowerShell, and no build for macOS or Linux. Each of these would add a surface to secure or a second place to edit, for a personal tool that already has a normal editor and a library folder.

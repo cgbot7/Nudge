@@ -154,7 +154,7 @@ flowchart LR
   start(["nudge index"]) --> lock{"nudge.lock free?"}
   lock -->|"no, scheduled run"| quiet(["exit quietly"])
   lock -->|"no, from a terminal"| busy(["wait up to 10 s, then report busy"])
-  lock -->|yes| harvest["runHarvest, if harvest.enabled:<br/>copy new LLM notes in as pending,<br/>rewrite untouched copies whose<br/>origin changed"]
+  lock -->|yes| harvest["runHarvest, if harvest.enabled:<br/>copy new LLM notes in as pending,<br/>rewrite untouched copies whose<br/>origin changed; distill new chat<br/>exchanges into drafts"]
   harvest --> sync["syncLibrary: edited sheets<br/>extracted and scanned again,<br/>renames matched by SHA256;<br/>--rebuild deletes index.db"]
   sync --> kind{"processInbox:<br/>each inbox file"}
   kind -->|"same SHA256"| dup["to _duplicates,<br/>with a reason file"]
@@ -221,12 +221,12 @@ erDiagram
 | Where | File | Written by | Purpose |
 |---|---|---|---|
 | Library (default `%USERPROFILE%\nudge-library`, a Git repo) | `sheets\<id>-<slug>.<ext>` | Import | Imported sheets |
-| | `drafts\<id>-<slug>.md` | `nudge suggest --save` | LLM drafts until `nudge approve` |
+| | `drafts\<id>-<slug>.md` | `nudge suggest --save`, `nudge harvest` (chats) | LLM drafts until `nudge approve` or `nudge review` |
 | | `ocr\<sha256>.txt` | Import, `nudge index` | OCR text, so a rebuild needs no vision model |
 | | `manifest.json` | Every library change | One entry per sheet: the record of truth |
 | | `rules.json`, `tags.json` | Seeded with defaults (19 rules), then edited by you; `tags.json` also by review | Project signature rules; tag aliases |
 | | `gap-ignores.json` | `nudge ignore-gap` | Gaps silenced everywhere or per project |
-| | `harvest-seen.json` | `nudge harvest`, `nudge review --reject` | Every harvested origin: its last hash, the sheet it became, or that you rejected it |
+| | `harvest-seen.json` | `nudge harvest`, `nudge review --reject` | Every harvested origin: its last hash, the sheet it became, or that you rejected it; every chat read: messages seen, drafts written, rejected; the date chat harvesting started |
 | | `inbox\`, `inbox\_blocked\`, `inbox\_duplicates\` | You, `nudge index` | Drop folder (ignored by Git); parked files with `.reason.txt` beside them |
 | `%APPDATA%\nudge\` | `config.json` | You, or `nudge add` with defaults | Machine settings |
 | | `backups\run-key.reg.nudge-backup-<time>` | `nudge install` | Run key backup before the popup value is replaced |
@@ -243,7 +243,7 @@ Deleting `%LOCALAPPDATA%\nudge\` loses usage history, the "try:" rotation and al
 
 ## Configuration
 
-`packages/core/src/config.ts` validates `%APPDATA%\nudge\config.json` with zod and fills defaults: `library`, `roots`, `ollama` (`host`, `embedModel`, `chatModel`, `visionModel`, optional `chatHost`, `chatApi`, `chatApiKeyEnv`), `staleAfterDays` (180), `unusedAfterDays` (30), `hotkey` (`Ctrl+Alt+Space`), `ocrMaxPages` (50) and `harvest` (`enabled` false, `sources`, `maxPerRun` 25). The CLI, the MCP server and the sidecar read it on every call, so edits apply without restarting the MCP server or the popup. The prompt hook never reads it; it only reads the hook cache. `chatApiKeyEnv` holds the name of an environment variable, never the token itself. The README lists every setting and every environment variable the code reads.
+`packages/core/src/config.ts` validates `%APPDATA%\nudge\config.json` with zod and fills defaults: `library`, `roots`, `ollama` (`host`, `embedModel`, `chatModel`, `visionModel`, optional `chatHost`, `chatApi`, `chatApiKeyEnv`), `staleAfterDays` (180), `unusedAfterDays` (30), `hotkey` (`Ctrl+Alt+Space`), `ocrMaxPages` (50) and `harvest` (`enabled` false, `sources`, `maxPerRun` 25, `maxChatsPerRun` 5, `exportsDir`). The CLI, the MCP server and the sidecar read it on every call, so edits apply without restarting the MCP server or the popup. The prompt hook never reads it; it only reads the hook cache. `chatApiKeyEnv` holds the name of an environment variable, never the token itself. The README lists every setting and every environment variable the code reads.
 
 ## Trust boundaries
 

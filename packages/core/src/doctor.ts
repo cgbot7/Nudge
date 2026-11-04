@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig, type Config } from './config.ts';
 import { embeddingCoverage, embeddingModels, indexedSheets, openDb, sectionCount } from './db.ts';
 import { readGapIgnores } from './gaps.ts';
+import { CHAT_SOURCE_LABELS, CHAT_SOURCE_NAMES, chatSourceDir } from './harvest/chats.ts';
 import { readLedger } from './harvest/ledger.ts';
 import { SOURCES, SOURCE_NAMES } from './harvest/sources.ts';
 import { gitAvailable, isRepoRoot } from './git.ts';
@@ -90,6 +91,17 @@ function harvestChecks(config: Config, add: Add): void {
     const dir = source.dir();
     if (!fs.existsSync(dir)) add('ok', 'harvest', `${source.label}: ${dir} not found; skipped`);
     else add('ok', 'harvest', `${source.label}: ${source.list().length} notes in ${dir}`);
+  }
+  const chats = Object.values(ledger.chats);
+  const drafts = chats.reduce((n, c) => n + c.sheetIds.length, 0);
+  const since = ledger.chatsSince ? `chats since ${ledger.chatsSince}` : 'chats from the day of the first run';
+  add('ok', 'harvest', `${since}: ${chats.length} read, ${drafts} drafts written, ${chats.filter((c) => c.rejected).length} rejected`);
+  for (const name of CHAT_SOURCE_NAMES) {
+    const label = CHAT_SOURCE_LABELS[name];
+    const dir = chatSourceDir(name, h.exportsDir);
+    if (!h.sources[name]) add('ok', 'harvest', `${label}: turned off in config.json`);
+    else if (!fs.existsSync(dir)) add('ok', 'harvest', name === 'exports' ? `${label}: drop a claude.ai export or a Google Takeout (Gemini Apps, JSON) zip into ${dir}` : `${label}: ${dir} not found; skipped`);
+    else add('ok', 'harvest', `${label}: ${dir}`);
   }
 }
 

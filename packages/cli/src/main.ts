@@ -14,7 +14,7 @@ import {
   applyInstall,
   blockingFindings,
   connectAi,
-  SOURCE_NAMES,
+  ALL_SOURCE_NAMES,
   dataPaths,
   ensureConfigFile,
   ensureLibrary,
@@ -25,7 +25,8 @@ import {
   hybridSearch,
   ignoreGap,
   inboxDir,
-  isSourceName,
+  isAnySourceName,
+  isHarvestedDraft,
   loadConfig,
   loadSuggestions,
   logUsage,
@@ -33,7 +34,7 @@ import {
   openDb,
   openInDefaultApp,
   parseTagList,
-  pendingSheets,
+  reviewQueue,
   planInstall,
   readLastProjectTags,
   readManifest,
@@ -81,9 +82,10 @@ Usage:
   nudge index [--rebuild]                 import the inbox, sync library changes, update the index
                                          and embeddings, scan projects, write the hook cache
                                          (--rebuild: recreate index.db)
-  nudge harvest [--dry-run] [--source <name>]
-                                         copy notes LLM tools wrote (Claude Code memory) into the
-                                         library; the originals stay where they are
+  nudge harvest [--dry-run] [--source <name>] [--since <date>]
+                                         copy Claude Code memory notes into the library, and turn
+                                         new Claude Code and Cursor chats and export files into drafts;
+                                         the originals stay where they are
   nudge review                            confirm or edit proposed titles and tags of pending sheets
     [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]] [<id> --reject]
   nudge search <query> [--tags a,b] [--limit n] [--keyword] [--json]
@@ -211,6 +213,7 @@ function proposalLines(sheet: Sheet): string[] {
 }
 
 function proposalOnly(sheet: Sheet): string[] {
+  if (isHarvestedDraft(sheet)) return [`  draft written by ${sheet.llm?.model ?? 'the chat model'}; tags: ${sheet.tags.join(', ') || 'none'}`];
   const p = sheet.proposal;
   if (!p) return [`  no proposal yet ${dim('(Ollama was not available)')}`];
   if (p.error) return [`  no proposal ${dim(`(${p.error})`)}`];
@@ -227,8 +230,8 @@ async function reviewInteractive(cfg: Config, sheets: Sheet[]): Promise<number> 
       out('');
       out(`${bold(sheet.id)}  "${sheet.title}"  ${dim(`(${sheet.format}${sheet.ocr ? ', OCR' : ''}, ${sheet.file}; ${i + 1} of ${sheets.length})`)}`);
       for (const line of proposalLines(sheet)) out(line);
-      const usable = !!sheet.proposal?.tags.length;
-      const harvested = sheet.source === 'harvested';
+      const usable = !!sheet.proposal?.tags.length || (isHarvestedDraft(sheet) && sheet.tags.length > 0);
+      const harvested = !!sheet.harvest;
       const choices = [usable && '[a]ccept', '[e]dit', harvested && '[r]eject', '[s]kip', '[q]uit'].filter(Boolean).join('  ');
       for (;;) {
         const answer = (await rl.question(`  ${choices} > `)).trim().toLowerCase();
@@ -236,7 +239,7 @@ async function reviewInteractive(cfg: Config, sheets: Sheet[]): Promise<number> 
         if (answer === 's' || answer === '') break;
         if (answer === 'r' && harvested) {
           const r = await rejectReview(cfg, sheet.id);
-          out(`  ${yellow('rejected')} ${sheet.id}; nudge harvest will not copy it again`);
+          out(`  ${yellow('rejected')} ${sheet.id}; nudge harvest will not ${sheet.harvest?.kind === 'chat' ? 'read that chat' : 'copy it'} again`);
           if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
           break;
         }
@@ -275,7 +278,7 @@ async function cmdReview(args: string[]): Promise<number> {
   const usage = 'usage: nudge review [--list] [--accept-all] [<id> --accept] [<id> --tags a,b [--title t]] [<id> --reject]';
   if (positionals.length > 1) throw new NudgeError(usage);
   const cfg = config();
-  const pending = pendingSheets(cfg.library);
+  const pending = reviewQueue(cfg.library);
 
   if (values.list) {
     if (!pending.length) out('nothing to review.');
@@ -290,7 +293,7 @@ async function cmdReview(args: string[]): Promise<number> {
   if (id !== undefined && values.reject) {
     if (values.accept || values.tags || values.title) throw new NudgeError(`--reject cannot be combined with --accept, --tags or --title.\n${usage}`);
     const r = await rejectReview(cfg, id);
-    out(`${yellow('rejected')} ${r.sheet.id} "${r.sheet.title}"; nudge harvest will not copy ${r.origins.length === 1 ? 'it' : 'these'} again:`);
+    out(`${yellow('rejected')} ${r.sheet.id} "${r.sheet.title}"; nudge harvest will not read ${r.origins.length === 1 ? 'it' : 'these'} again:`);
     for (const o of r.origins) out(`  ${o}`);
     if (r.commitError) warn(`the Git commit failed: ${r.commitError}`);
     return 0;
@@ -309,7 +312,7 @@ async function cmdReview(args: string[]): Promise<number> {
   if (values['accept-all']) {
     let n = 0;
     for (const s of pending) {
-      if (!s.proposal?.tags.length) {
+      if (!s.proposal?.tags.length && !(isHarvestedDraft(s) && s.tags.length)) {
         out(`${yellow('skipped')} ${s.id} "${s.title}": no proposal to accept (nudge review ${s.id} --tags a,b)`);
         continue;
       }
@@ -462,13 +465,43 @@ function printHarvestReport(h: HarvestReport): void {
     h.blocked.length && `${h.blocked.length} blocked`,
   ].filter(Boolean);
   out(`harvest${h.dryRun ? ' (dry run, nothing written)' : ''}: ${counts.join(', ')}; sources: ${h.sources.map((s) => `${s.name} ${s.found ? s.files : 'not found'}`).join(', ') || 'none enabled'}`);
+  if (h.sources.some((s) => s.name.endsWith('chats') || s.name === 'exports')) printChatReport(h);
+}
+
+function printChatReport(h: HarvestReport): void {
+  const c = h.chats;
+  const where = (x: { source: string; chat: string }) => `"${x.chat}" ${dim(`(${x.source})`)}`;
+  for (const d of c.drafts) {
+    for (const w of d.warnings) warn(`chats: ${d.sheet.id}: ${w}`);
+    out(`chats: draft ${bold(d.sheet.id)} "${d.sheet.title}" [${d.sheet.tags.join(', ')}] from ${where(d)}`);
+  }
+  for (const v of c.covered) out(dim(`chats: ${where(v)} repeats ${v.existing} (similarity ${v.score}); no draft`));
+  for (const b of c.blocked) warn(`chats: ${where(b)} has a likely secret (${b.rules.join(', ')}); never sent to the model, and skipped`);
+  for (const f of c.failed) warn(`chats: ${where(f)}: ${f.reason}`);
+  for (const u of c.exportsUnknown) warn(`chats: could not read ${u.file} (${u.reason}); moved to _unknown`);
+  for (const d of c.exportsDone) out(`chats: finished ${d}; moved to _done`);
+  for (const w of c.wouldDistill) out(`would distill: ${where(w)}, ${plural(w.exchanges, 'exchange')} that ${w.exchanges === 1 ? 'looks' : 'look'} like reference material`);
+  const counts = [
+    h.dryRun ? `${c.wouldDistill.length} to distill` : `${plural(c.drafts.length, 'draft')}`,
+    !h.dryRun && `${c.skipped} with nothing reusable`,
+    `${c.nothing} without reference material`,
+    `${c.unchanged} unchanged`,
+    c.waiting && `${c.waiting} waiting (${c.waitingReason ?? 'later run'})`,
+    c.active && `${c.active} still active`,
+    c.older && `${c.older} older than ${c.since}`,
+    c.rejected && `${c.rejected} rejected before`,
+  ].filter(Boolean);
+  out(`chats${h.dryRun ? ' (dry run)' : ''}: ${counts.join(', ')}`);
+  if (c.older) out(dim(`  chats changed before ${c.since} are left alone; nudge harvest --since <YYYY-MM-DD> reads further back`));
 }
 
 async function cmdHarvest(args: string[]): Promise<number> {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { 'dry-run': { type: 'boolean' }, source: { type: 'string' } } });
-  if (positionals.length) throw new NudgeError('usage: nudge harvest [--dry-run] [--source <name>]');
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { 'dry-run': { type: 'boolean' }, source: { type: 'string' }, since: { type: 'string' } } });
+  if (positionals.length) throw new NudgeError('usage: nudge harvest [--dry-run] [--source <name>] [--since <YYYY-MM-DD>]');
   const only = (values.source ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  for (const s of only) if (!isSourceName(s)) throw new NudgeError(`unknown source "${s}". Sources: ${SOURCE_NAMES.join(', ')}`);
+  for (const s of only) if (!isAnySourceName(s)) throw new NudgeError(`unknown source "${s}". Sources: ${ALL_SOURCE_NAMES.join(', ')}`);
+  const since = values.since;
+  if (since !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since)))) throw new NudgeError(`--since must be a date like 2026-10-01, got "${since}".`);
   const loaded = loadConfig();
   const cfg = loaded.config;
   const dryRun = !!values['dry-run'];
@@ -477,13 +510,14 @@ async function cmdHarvest(args: string[]): Promise<number> {
     for (const n of ensureLibrary(cfg.library)) out(dim(n));
   }
   const ai = dryRun ? null : await connectAi(cfg);
-  if (ai && !ai.up) warn(`Ollama is not available (${ai.downReason}): copied notes wait in the review queue without proposed tags`);
-  const run = () => runHarvest(cfg, { propose: ai?.propose ?? null, extract: extractOptions(cfg, ai), dryRun, only: only.filter(isSourceName), force: only.length > 0 });
+  if (ai && !ai.up) warn(`Ollama is not available (${ai.downReason}): copied notes wait in the review queue without proposed tags, and chats wait for a later run`);
+  const run = () =>
+    runHarvest(cfg, { propose: ai?.propose ?? null, extract: extractOptions(cfg, ai), dryRun, only: only.filter(isAnySourceName), force: only.length > 0, client: ai?.up ? ai.client : null, since });
   // A dry run only reads, so it needs no lock.
   const report = dryRun ? await run() : await withLock('harvest', run);
   printHarvestReport(report);
   if (report.commitError) warn(`the Git commit failed: ${report.commitError}`);
-  if (report.added.length) out(dim('confirm or reject them with nudge review'));
+  if (report.added.length || report.chats.drafts.length) out(dim('confirm or reject them with nudge review'));
   if (report.updated.length) out(dim('run nudge index to re-index the updated copies'));
   return 0;
 }
